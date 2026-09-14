@@ -21,6 +21,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "slug",
             "description",
             "category",
+            "image_url",
             "price",
             "currency",
             "available",

@@ -57,7 +57,7 @@ def begin_checkout(user, cart_items):
             total_amount += product.price * quantity
 
         order.total_amount = total_amount
-        order.currency = next(iter(locked_products.values())).currency if locked_products else "USD"
+        order.currency = next(iter(locked_products.values())).currency if locked_products else "INR"
         order.save(update_fields=["total_amount", "currency"])
 
     for product in locked_products.values():

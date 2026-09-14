@@ -10,20 +10,34 @@ import OrderStatus from "./pages/OrderStatus";
 function Nav() {
   const { isAuthenticated, user, logout } = useAuth();
   const { cart } = useCart();
+  const itemCount = cart.items.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <nav>
-      <Link to="/">Catalog</Link>
-      <Link to="/cart">Cart ({cart.items.length})</Link>
-      {isAuthenticated ? (
-        <>
-          <span>{user.email}</span>
-          <button onClick={logout}>Log out</button>
-        </>
-      ) : (
-        <Link to="/login">Log in</Link>
-      )}
-    </nav>
+    <header className="site-nav">
+      <div className="site-nav-inner">
+        <Link to="/" className="brand">
+          <span className="brand-mark">R</span>
+          Reservly
+        </Link>
+        <nav className="nav-links">
+          <Link to="/">Catalog</Link>
+          <Link to="/cart" className="cart-link">
+            Cart
+            {itemCount > 0 && <span className="cart-badge">{itemCount}</span>}
+          </Link>
+          {isAuthenticated ? (
+            <>
+              <span className="nav-user">{user.email}</span>
+              <button className="btn btn-ghost" onClick={logout}>
+                Log out
+              </button>
+            </>
+          ) : (
+            <Link to="/login">Log in</Link>
+          )}
+        </nav>
+      </div>
+    </header>
   );
 }
 

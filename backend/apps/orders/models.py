@@ -20,7 +20,7 @@ class Order(models.Model):
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING_PAYMENT)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    currency = models.CharField(max_length=3, default="USD")
+    currency = models.CharField(max_length=3, default="INR")
 
     placed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

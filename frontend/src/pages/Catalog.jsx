@@ -2,6 +2,47 @@ import { useEffect, useState } from "react";
 
 import api from "../services/api";
 import { useCart } from "../context/CartContext";
+import { formatINR } from "../utils/currency";
+
+function StockBadge({ available }) {
+  if (available <= 0) return <span className="stock-badge out">Sold out</span>;
+  if (available <= 5) return <span className="stock-badge low">Only {available} left</span>;
+  return null;
+}
+
+function ProductCard({ product, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const soldOut = product.available <= 0;
+
+  async function handleAdd() {
+    setAdding(true);
+    try {
+      await onAdd(product.id);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <li className="product-card">
+      <div className="product-media">
+        <img src={product.image_url} alt={product.name} />
+        <StockBadge available={product.available} />
+      </div>
+      <div className="product-body">
+        {product.category && <span className="product-category">{product.category.name}</span>}
+        <h3>{product.name}</h3>
+        <p className="product-desc">{product.description}</p>
+        <div className="product-footer">
+          <span className="price">{formatINR(product.price)}</span>
+          <button className="btn btn-primary" disabled={soldOut || adding} onClick={handleAdd}>
+            {soldOut ? "Sold out" : adding ? "Adding..." : "Add to cart"}
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
 
 export default function Catalog() {
   const [products, setProducts] = useState([]);
@@ -15,24 +56,22 @@ export default function Catalog() {
     });
   }, []);
 
-  if (loading) return <p>Loading catalog...</p>;
+  if (loading) return <p className="center-loading">Loading catalog...</p>;
 
   return (
     <div className="catalog">
-      <h1>Catalog</h1>
+      <section className="hero">
+        <span className="hero-eyebrow">⚡ Live flash-sale stock</span>
+        <h1>Grab it before it's gone.</h1>
+        <p>
+          Every checkout here goes through a real concurrency-safe reservation system - stock
+          only ever commits to one buyer, even when hundreds race for the same item at once.
+        </p>
+      </section>
+
       <ul className="product-grid">
         {products.map((product) => (
-          <li key={product.id} className="product-card">
-            <h3>{product.name}</h3>
-            <p>{product.description}</p>
-            <p>
-              {product.price} {product.currency}
-            </p>
-            <p>{product.available > 0 ? `${product.available} in stock` : "Out of stock"}</p>
-            <button disabled={product.available <= 0} onClick={() => addItem(product.id, 1)}>
-              Add to cart
-            </button>
-          </li>
+          <ProductCard key={product.id} product={product} onAdd={(id) => addItem(id, 1)} />
         ))}
       </ul>
     </div>
