@@ -59,7 +59,6 @@ class CheckoutView(APIView):
                 metadata={"order_id": str(order.id)},
                 success_url=f"{settings.FRONTEND_URL}/orders/{order.id}?success=true",
                 cancel_url=f"{settings.FRONTEND_URL}/orders/{order.id}?canceled=true",
-                timeout=STRIPE_REQUEST_TIMEOUT_SECONDS,
             )
             checkout_url = session.url
         except stripe.error.StripeError:
