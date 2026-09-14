@@ -1,4 +1,7 @@
 from django.db import models
+from pgvector.django import HnswIndex, VectorField
+
+EMBEDDING_DIMENSIONS = 768
 
 
 class Category(models.Model):
@@ -40,8 +43,24 @@ class Product(models.Model):
     reserved = models.PositiveIntegerField(default=0)
     version = models.PositiveIntegerField(default=0)
 
+    # Populated by apps.assistant.embeddings (Gemini's embedding model) via
+    # the backfill_embeddings management command. Null until embedded - the
+    # RAG search excludes products with no embedding rather than erroring.
+    embedding = VectorField(dimensions=EMBEDDING_DIMENSIONS, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            HnswIndex(
+                name="product_embedding_hnsw",
+                fields=["embedding"],
+                m=16,
+                ef_construction=64,
+                opclasses=["vector_cosine_ops"],
+            )
+        ]
 
     @property
     def available(self):

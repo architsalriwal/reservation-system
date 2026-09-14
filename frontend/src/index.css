@@ -691,6 +691,122 @@ input {
   color: var(--color-text-muted);
 }
 
+/* ---------- Assistant chat ---------- */
+
+.assistant-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--color-primary), #8b5cf6);
+  color: white;
+  font-size: 1.3rem;
+  box-shadow: var(--shadow-lift);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  transition: transform 0.15s ease;
+}
+
+.assistant-fab:hover {
+  transform: scale(1.06);
+}
+
+.assistant-panel {
+  position: fixed;
+  bottom: 92px;
+  right: 24px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  height: 460px;
+  max-height: calc(100vh - 140px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 30;
+}
+
+.assistant-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-primary-soft);
+}
+
+.assistant-subtitle {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.assistant-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assistant-bubble {
+  max-width: 85%;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.assistant-bubble.user {
+  align-self: flex-end;
+  background: var(--color-primary);
+  color: white;
+  border-bottom-right-radius: 2px;
+}
+
+.assistant-bubble.model {
+  align-self: flex-start;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-bottom-left-radius: 2px;
+}
+
+.assistant-typing {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.assistant-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.assistant-input-row input {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.assistant-input-row input:focus {
+  border-color: var(--color-primary);
+}
+
+.assistant-input-row button {
+  padding: 9px 16px;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 760px) {
@@ -708,5 +824,16 @@ input {
 
   main {
     padding: 0 16px 48px;
+  }
+
+  .assistant-panel {
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .assistant-fab {
+    right: 16px;
+    bottom: 16px;
   }
 }
