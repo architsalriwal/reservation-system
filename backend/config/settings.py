@@ -142,3 +142,5 @@ STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="")
 
 # --- Reservation TTL ---
 RESERVATION_TTL_MINUTES = config("RESERVATION_TTL_MINUTES", default=15, cast=int)
+
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
