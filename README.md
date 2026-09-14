@@ -133,6 +133,25 @@ permanently block a legitimate second attempt. See
 including a 10-thread proof that a shared key across concurrent requests
 still produces exactly one order.
 
+### 7. Event-driven order processing — scoped to what's safe to decouple
+
+CLAUDE.md's original description of this pattern includes inventory
+deduction as one of the decoupled consumers. Deliberately *not* implemented
+that way: inventory deduction already happens synchronously inside
+`confirm_reservation()`'s locked transaction, and moving it to an async
+consumer would mean a request could return "paid" before stock is actually
+decremented — reopening the exact overselling race property 1 exists to
+close. Only the two side effects that aren't correctness-critical to the
+stock guarantee are event consumers: a confirmation email and a fulfillment
+simulation. `dispatch_order_placed()` fires once, after commit, and makes
+two independent `.delay()` calls — not one task invoking the other, which
+is what actually guarantees a broken email provider can never block or fail
+fulfillment. Verified live with a real Celery worker: a real "paid" event
+produced a rendered confirmation email and a
+`paid → processing → shipped → delivered` status trail with the later
+steps genuinely 8 seconds apart. See
+[`test_event_driven_processing.py`](backend/apps/orders/tests/test_event_driven_processing.py).
+
 ## Known limitation: Redis/Postgres drift
 
 The Redis availability cache is a write-through cache updated after every
@@ -222,6 +241,11 @@ python manage.py migrate
 python manage.py seed_demo_products        # catalog with icon art + INR pricing
 python manage.py backfill_embeddings       # needs GEMINI_API_KEY - powers the AI search
 python manage.py runserver
+
+# in another terminal - runs reservation-expiry, the webhook recovery
+# sweep, and the confirmation-email/fulfillment consumers.
+# --pool=solo is a Windows-only requirement; drop it on Linux/macOS.
+celery -A config worker --pool=solo --loglevel=info
 
 cd ../frontend
 npm install
