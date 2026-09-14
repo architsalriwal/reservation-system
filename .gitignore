@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Django
+*.log
+db.sqlite3
+staticfiles/
+media/
+
+# Secrets - never commit
+.env
+.env.*
+!.env.example
+*firebase*adminsdk*.json
+*serviceAccount*.json
+secrets/
+
+# Node / React
+node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+npm-debug.log*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
