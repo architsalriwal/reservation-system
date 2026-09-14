@@ -152,5 +152,7 @@ FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
 
 # --- Gemini (RAG product search + function-calling assistant) ---
 GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
-GEMINI_CHAT_MODEL = config("GEMINI_CHAT_MODEL", default="gemini-2.5-flash")
+# gemini-2.5-flash was retired for new users mid-2026 in favor of 3.6;
+# verified directly against the API before picking this default.
+GEMINI_CHAT_MODEL = config("GEMINI_CHAT_MODEL", default="gemini-3.6-flash")
 GEMINI_EMBEDDING_MODEL = config("GEMINI_EMBEDDING_MODEL", default="gemini-embedding-001")
