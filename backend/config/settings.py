@@ -132,7 +132,7 @@ SIMPLE_JWT = {
 # credentials are required so the session cookie backing the cart survives
 # cross-origin requests from the SPA dev server.
 CORS_ALLOWED_ORIGINS = config(
-    "CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv()
+    "CORS_ALLOWED_ORIGINS", default="http://localhost:5173", cast=Csv()
 )
 CORS_ALLOW_CREDENTIALS = True
 
@@ -147,4 +147,4 @@ STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="")
 # --- Reservation TTL ---
 RESERVATION_TTL_MINUTES = config("RESERVATION_TTL_MINUTES", default=15, cast=int)
 
-FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")

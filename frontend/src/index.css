@@ -1,0 +1,74 @@
+:root {
+  color-scheme: light dark;
+  font: 16px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #8884;
+}
+
+nav a {
+  text-decoration: none;
+}
+
+.product-grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.product-card {
+  border: 1px solid #8884;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.cart ul,
+.order-status ul {
+  list-style: none;
+  padding: 0;
+}
+
+.cart li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.cart input[type="number"] {
+  width: 60px;
+}
+
+.error {
+  color: #d33;
+}
+
+.live-badge {
+  color: #2a2;
+  font-size: 0.85em;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+}

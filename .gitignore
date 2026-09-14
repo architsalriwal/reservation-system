@@ -22,7 +22,7 @@ secrets/
 
 # Node / React
 node_modules/
-frontend/build/
+frontend/dist/
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
@@ -37,3 +37,8 @@ Thumbs.db
 # Celery
 celerybeat-schedule
 celerybeat.pid
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
