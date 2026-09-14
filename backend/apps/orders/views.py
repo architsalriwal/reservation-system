@@ -1,12 +1,13 @@
 import stripe
 from django.conf import settings
+from django.db import IntegrityError, transaction
 from rest_framework.generics import RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.orders.exceptions import OutOfStock
-from apps.orders.models import Order, OrderStatusEvent
+from apps.orders.models import CheckoutIdempotencyKey, Order, OrderStatusEvent
 from apps.orders.serializers import OrderSerializer
 from apps.orders.services import begin_checkout
 from apps.storefront import cart as cart_ops
@@ -22,19 +23,50 @@ class CheckoutView(APIView):
     a pending order, and returns a Stripe Checkout session to redirect to.
     The session cart (not client-supplied line items) is the source of truth
     for what's being purchased.
+
+    Requires an `Idempotency-Key` header (client-generated, one per logical
+    checkout attempt) so a retried request - flaky network, a double-click
+    that slips past the disabled button, a proxy replaying a POST it never
+    got a response for - can't create a second order. The claiming INSERT
+    happens before begin_checkout() ever reserves stock, mirroring the
+    Stripe webhook's claim-before-mutate pattern: a losing concurrent
+    request with the same key is rejected before it reserves anything, so
+    there's no reservation to clean up on the losing side.
     """
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if not idempotency_key:
+            return Response({"detail": "Idempotency-Key header is required."}, status=400)
+
+        try:
+            with transaction.atomic():
+                key_record = CheckoutIdempotencyKey.objects.create(user=request.user, key=idempotency_key)
+        except IntegrityError:
+            existing = CheckoutIdempotencyKey.objects.get(user=request.user, key=idempotency_key)
+            if existing.order_id:
+                # A prior request with this same key already completed -
+                # replay its result instead of creating a second order.
+                return Response(
+                    {"order": OrderSerializer(existing.order).data, "checkout_url": existing.checkout_url},
+                    status=201 if existing.checkout_url else 502,
+                )
+            return Response(
+                {"detail": "A checkout with this idempotency key is already being processed."}, status=409
+            )
+
         cart = cart_ops.get_cart(request.session)
         cart_items = [(int(product_id), quantity) for product_id, quantity in cart.items()]
         if not cart_items:
+            key_record.delete()  # nothing was ever attempted - safe to let a retry with this key try again
             return Response({"detail": "Cart is empty."}, status=400)
 
         try:
             order = begin_checkout(request.user, cart_items)
         except OutOfStock as exc:
+            key_record.delete()  # no order/reservation exists - a retry (e.g. after fixing the cart) should not be blocked
             return Response(
                 {"detail": "Insufficient stock.", "product_id": exc.product_id, "available": exc.available},
                 status=409,
@@ -71,6 +103,10 @@ class CheckoutView(APIView):
                 to_status="stripe_session_failed",
                 source="checkout",
             )
+
+        key_record.order = order
+        key_record.checkout_url = checkout_url or ""
+        key_record.save(update_fields=["order", "checkout_url"])
 
         cart_ops.clear(request.session)
 

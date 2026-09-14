@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import api from "../services/api";
@@ -13,6 +13,16 @@ export default function Cart() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [error, setError] = useState(null);
 
+  // One key per page view, reused across retries of a checkout click
+  // within that view (network hiccup, a double-click) so the backend can
+  // dedupe them into a single order - see CheckoutView's docstring. A
+  // fresh mount (new page visit) gets a fresh key, which is correct: that's
+  // a new, deliberate checkout attempt, not a retry of the old one.
+  const idempotencyKeyRef = useRef(null);
+  if (!idempotencyKeyRef.current) {
+    idempotencyKeyRef.current = crypto.randomUUID();
+  }
+
   async function handleCheckout() {
     if (!isAuthenticated) {
       navigate("/login");
@@ -21,7 +31,11 @@ export default function Cart() {
     setCheckingOut(true);
     setError(null);
     try {
-      const { data } = await api.post("/checkout/");
+      const { data } = await api.post(
+        "/checkout/",
+        {},
+        { headers: { "Idempotency-Key": idempotencyKeyRef.current } }
+      );
       if (data.checkout_url) {
         window.location.href = data.checkout_url;
       } else {
