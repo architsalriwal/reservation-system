@@ -42,3 +42,7 @@ celerybeat.pid
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Load test generated artifacts (JWTs + run output, regenerate via seed_load_test)
+load_test/tokens.json
+load_test/results*.csv

@@ -5,6 +5,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-reservation_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    # Default max_connections=100 can't sustain 500 concurrent unpooled
+    # connections during the load test (each Django request opens its own
+    # connection with no pooling in front). Raised for local dev/load-test
+    # use; a real production deployment should sit pgbouncer in front
+    # instead of raising this indefinitely.
+    command: ["postgres", "-c", "max_connections=600"]
     ports:
       - "5433:5432"
     volumes:

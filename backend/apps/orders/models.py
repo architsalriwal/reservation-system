@@ -92,8 +92,12 @@ class OrderStatusEvent(models.Model):
     """Append-only audit log. The only path that triggers a WebSocket push."""
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_events")
-    from_status = models.CharField(max_length=20)
-    to_status = models.CharField(max_length=20)
+    # Wider than Order.Status's own choices (max 20 chars) because this log
+    # also records off-model conflict/degradation markers, e.g.
+    # "payment_after_expiry_conflict" and "stripe_session_failed", which
+    # aren't real Order statuses - just audit-trail events.
+    from_status = models.CharField(max_length=40)
+    to_status = models.CharField(max_length=40)
     source = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
 
