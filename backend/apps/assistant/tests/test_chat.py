@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from google.genai import errors
 
 from apps.assistant.chat import run_chat
 from apps.catalog.models import Product
@@ -64,3 +65,37 @@ def test_chat_loop_answers_directly_with_no_tool_call_needed():
 
     assert result["reply"] == "Hi! How can I help you shop today?"
     assert result["tool_calls"] == []
+
+
+@pytest.mark.django_db
+def test_chat_loop_degrades_gracefully_on_quota_exhaustion():
+    """Reproduces exactly what happened live: the free-tier daily quota was
+    hit mid-demo and the endpoint 500'd instead of degrading. This asserts
+    the fix - a real ClientError(429, ...) from the SDK, not a generic
+    Exception, since that's the actual shape Gemini errors take.
+    """
+
+    def raise_quota_error(**kwargs):
+        raise errors.ClientError(429, {"error": {"message": "RESOURCE_EXHAUSTED"}})
+
+    fake_client = SimpleNamespace(models=SimpleNamespace(generate_content=raise_quota_error))
+
+    with patch("apps.assistant.chat.get_client", return_value=fake_client):
+        result = run_chat("find me running shoes", [], user=None, session={})
+
+    assert result["degraded"] is True
+    assert "try again" in result["reply"].lower()
+
+
+@pytest.mark.django_db
+def test_chat_loop_degrades_gracefully_on_other_api_errors():
+    def raise_server_error(**kwargs):
+        raise errors.ServerError(503, {"error": {"message": "UNAVAILABLE"}})
+
+    fake_client = SimpleNamespace(models=SimpleNamespace(generate_content=raise_server_error))
+
+    with patch("apps.assistant.chat.get_client", return_value=fake_client):
+        result = run_chat("hello", [], user=None, session={})
+
+    assert result["degraded"] is True
+    assert result["reply"]

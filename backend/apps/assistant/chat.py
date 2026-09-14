@@ -6,7 +6,7 @@ each turn stays visible and auditable - not magic.
 """
 
 from django.conf import settings
-from google.genai import types
+from google.genai import errors, types
 
 from apps.assistant.gemini_client import get_client
 from apps.assistant.tools import TOOL_DECLARATIONS, TOOL_IMPLEMENTATIONS
@@ -15,7 +15,9 @@ SYSTEM_INSTRUCTION = """You are the shopping assistant for Reservly, a flash-sal
 storefront. Help the shopper find products, check their own order status, and add
 items to their cart. Use the tools available to you rather than guessing at
 product names, prices, or order statuses - only state facts a tool actually
-returned. Prices are in INR. Keep replies brief and conversational. Reply in
+returned. Prices are in INR - always format them as e.g. "₹3,499", never
+as a bare number or with a currency code after it. Keep replies brief and
+conversational. Reply in
 plain text only - the chat UI does not render Markdown, so never use **bold**,
 bullet/numbered list syntax, or other formatting; use plain sentences instead."""
 
@@ -43,9 +45,20 @@ def run_chat(message, history, user, session):
     tool_calls_made = []
 
     for _ in range(MAX_TOOL_ROUNDS):
-        response = client.models.generate_content(
-            model=settings.GEMINI_CHAT_MODEL, contents=contents, config=config
-        )
+        try:
+            response = client.models.generate_content(
+                model=settings.GEMINI_CHAT_MODEL, contents=contents, config=config
+            )
+        except errors.APIError as exc:
+            # A quota/rate-limit hit or a Gemini-side outage shouldn't 500 the
+            # request - the chat is a nice-to-have layered on top of a working
+            # store, not something the rest of the app depends on.
+            if getattr(exc, "code", None) == 429:
+                reply = "I'm getting a lot of requests right now - please try again in a minute."
+            else:
+                reply = "I'm having trouble reaching the assistant right now. Please try again shortly."
+            return {"reply": reply, "tool_calls": tool_calls_made, "degraded": True}
+
         candidate = response.candidates[0]
         function_calls = [
             part.function_call for part in candidate.content.parts if part.function_call
