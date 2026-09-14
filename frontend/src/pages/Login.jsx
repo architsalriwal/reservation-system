@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext";
@@ -10,8 +10,18 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
 
+  // Navigating during render (calling navigate() directly in the component
+  // body) triggers React's "Cannot update a component while rendering a
+  // different component" warning, since it updates the router's state as a
+  // side effect of rendering Login itself. Doing it in an effect instead
+  // defers it to after render, which is what React expects.
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/");
+    }
+  }, [isAuthenticated, navigate]);
+
   if (isAuthenticated) {
-    navigate("/");
     return null;
   }
 
