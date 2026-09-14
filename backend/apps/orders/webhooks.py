@@ -30,13 +30,20 @@ class StripeWebhookView(APIView):
         except (ValueError, stripe.error.SignatureVerificationError):
             return HttpResponse(status=400)
 
+        # construct_event returns typed StripeObjects (Charge, PaymentIntent,
+        # ...), not plain dicts - .get() isn't valid on them, and a JSONField
+        # can't serialize them directly either. to_dict() recursively
+        # converts the whole event to plain JSON-serializable dicts, which
+        # both the metadata lookup below and StripeEvent.payload need.
+        event_dict = event.to_dict()
+
         try:
             with transaction.atomic():
                 stripe_event = StripeEvent.objects.create(
-                    stripe_event_id=event["id"],
-                    event_type=event["type"],
-                    order_id=event["data"]["object"].get("metadata", {}).get("order_id"),
-                    payload=event,
+                    stripe_event_id=event_dict["id"],
+                    event_type=event_dict["type"],
+                    order_id=event_dict["data"]["object"].get("metadata", {}).get("order_id"),
+                    payload=event_dict,
                 )
         except IntegrityError:
             # Duplicate delivery of an event we've already claimed. Ack it
