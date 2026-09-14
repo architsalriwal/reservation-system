@@ -1,0 +1,38 @@
+name: Deploy to AWS EC2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            APP_DIR=/home/${{ secrets.EC2_USER }}/reservation-system
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+            if [ -d .git ]; then
+              git pull origin main
+            else
+              git clone ${{ github.server_url }}/${{ github.repository }}.git .
+            fi
+            # docker-compose.prod.yml lives at the repo root and its service
+            # build contexts (./backend, ./frontend) are relative to it - the
+            # previous project's Dockerfile pointed at a path
+            # (ONLINE_SHOPPING/manage.py) that didn't exist anywhere in the
+            # repo, so the container crash-looped on first boot. Running
+            # compose from the actual repo root with matching build contexts
+            # is what that bug was missing.
+            docker compose -f docker-compose.prod.yml up -d --build

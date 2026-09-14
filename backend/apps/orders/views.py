@@ -6,10 +6,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.orders.exceptions import OutOfStock
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderStatusEvent
 from apps.orders.serializers import OrderSerializer
 from apps.orders.services import begin_checkout
 from apps.storefront import cart as cart_ops
+
+# Fail fast rather than let a slow/unreachable Stripe hang the checkout
+# request open - the reservation has already committed by this point, so a
+# Stripe outage here is a payment-initiation failure, not a stock-safety one.
+STRIPE_REQUEST_TIMEOUT_SECONDS = 5
 
 
 class CheckoutView(APIView):
@@ -35,29 +40,44 @@ class CheckoutView(APIView):
                 status=409,
             )
 
+        checkout_url = None
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": order.currency.lower(),
-                        "product_data": {"name": item.product.name},
-                        "unit_amount": int(item.unit_price_snapshot * 100),
-                    },
-                    "quantity": item.quantity,
-                }
-                for item in order.items.select_related("product").all()
-            ],
-            metadata={"order_id": str(order.id)},
-            success_url=f"{settings.FRONTEND_URL}/orders/{order.id}?success=true",
-            cancel_url=f"{settings.FRONTEND_URL}/orders/{order.id}?canceled=true",
-        )
+        try:
+            session = stripe.checkout.Session.create(
+                mode="payment",
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": order.currency.lower(),
+                            "product_data": {"name": item.product.name},
+                            "unit_amount": int(item.unit_price_snapshot * 100),
+                        },
+                        "quantity": item.quantity,
+                    }
+                    for item in order.items.select_related("product").all()
+                ],
+                metadata={"order_id": str(order.id)},
+                success_url=f"{settings.FRONTEND_URL}/orders/{order.id}?success=true",
+                cancel_url=f"{settings.FRONTEND_URL}/orders/{order.id}?canceled=true",
+                timeout=STRIPE_REQUEST_TIMEOUT_SECONDS,
+            )
+            checkout_url = session.url
+        except stripe.error.StripeError:
+            # The reservation already committed and holds the stock under its
+            # normal TTL - a Stripe outage here degrades to "payment session
+            # unavailable, try again", not a corrupted or lost reservation.
+            OrderStatusEvent.objects.create(
+                order=order,
+                from_status=order.status,
+                to_status="stripe_session_failed",
+                source="checkout",
+            )
 
         cart_ops.clear(request.session)
 
         return Response(
-            {"order": OrderSerializer(order).data, "checkout_url": session.url}, status=201
+            {"order": OrderSerializer(order).data, "checkout_url": checkout_url},
+            status=201 if checkout_url else 502,
         )
 
 
