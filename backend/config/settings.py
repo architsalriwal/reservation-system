@@ -167,3 +167,10 @@ GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 # quota isn't a concern (e.g. a paid key).
 GEMINI_CHAT_MODEL = config("GEMINI_CHAT_MODEL", default="gemini-flash-lite-latest")
 GEMINI_EMBEDDING_MODEL = config("GEMINI_EMBEDDING_MODEL", default="gemini-embedding-001")
+
+# --- Email (order confirmation, sent async from the "order placed" event) ---
+# Console backend by default so the demo works without a real email provider
+# - it prints the message to the process log instead of sending it. Point
+# EMAIL_BACKEND at a real SMTP backend + credentials for actual delivery.
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="orders@reservly.example")

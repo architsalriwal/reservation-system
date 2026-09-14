@@ -1,6 +1,8 @@
 from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
+from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 
@@ -8,6 +10,11 @@ from apps.catalog.models import Product
 from apps.orders.models import Order, Reservation, StripeEvent
 from apps.orders.redis_client import write_through_available
 from apps.orders.services import handle_stripe_event, transition_order_status
+
+# Real fulfillment takes days; this is a demo, and the whole point of
+# showing this off is watching the order-status page update live without
+# refreshing, so the steps are seconds apart instead.
+FULFILLMENT_STEP_DELAY_SECONDS = 8
 
 
 @shared_task
@@ -59,6 +66,78 @@ def expire_single_reservation(self, reservation_id):
         transition_order_status(order, Order.Status.EXPIRED, source="celery_beat")
 
     write_through_available(product.id, product.available)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_order_confirmation_email(self, order_id):
+    """One of two independent consumers of the "order placed" event (see
+    apps.orders.events) - runs on its own, retried on its own. A slow or
+    down email provider can never block the checkout response (this task
+    is enqueued, not awaited) or affect start_fulfillment below.
+    """
+    try:
+        order = Order.objects.select_related("user").get(pk=order_id)
+    except Order.DoesNotExist:
+        return
+
+    if not order.user or not order.user.email:
+        return
+
+    try:
+        send_mail(
+            subject=f"Order confirmed - {order.id}",
+            message=(
+                f"Thanks for your order!\n\nTotal: {order.currency} {order.total_amount}\n"
+                f"Order ID: {order.id}\n\nWe'll let you know as it ships."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.user.email],
+        )
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3)
+def start_fulfillment(self, order_id):
+    """The other independent consumer of the same event. Immediately moves
+    a paid order into processing, then schedules the remaining stages as
+    delayed follow-up tasks rather than sleeping in-process - a worker
+    isn't blocked holding this task for the full fulfillment duration.
+    """
+    try:
+        order = Order.objects.get(pk=order_id)
+    except Order.DoesNotExist:
+        return
+
+    if order.status != Order.Status.PAID:
+        return  # moved on already (e.g. a refund/cancellation) - don't force it backward
+
+    transition_order_status(order, Order.Status.PROCESSING, source="fulfillment")
+    advance_fulfillment.apply_async(
+        args=[order_id, Order.Status.SHIPPED], countdown=FULFILLMENT_STEP_DELAY_SECONDS
+    )
+
+
+@shared_task(bind=True, max_retries=3)
+def advance_fulfillment(self, order_id, next_status):
+    """transition_order_status() itself no-ops on a non-transition, so this
+    is safe to run more than once for the same step if Celery ever
+    redelivers it - not a special case added just for this task.
+    """
+    try:
+        order = Order.objects.get(pk=order_id)
+    except Order.DoesNotExist:
+        return
+
+    if order.status in (Order.Status.CANCELED, Order.Status.EXPIRED):
+        return
+
+    transition_order_status(order, next_status, source="fulfillment")
+
+    if next_status == Order.Status.SHIPPED:
+        advance_fulfillment.apply_async(
+            args=[order_id, Order.Status.DELIVERED], countdown=FULFILLMENT_STEP_DELAY_SECONDS
+        )
 
 
 @shared_task

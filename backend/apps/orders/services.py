@@ -5,6 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.catalog.models import Product
+from apps.orders.events import dispatch_order_placed
 from apps.orders.exceptions import OutOfStock
 from apps.orders.models import Order, OrderItem, OrderStatusEvent, Reservation, StripeEvent
 from apps.orders.redis_client import available_stock_key, get_redis, write_through_available
@@ -105,6 +106,7 @@ def confirm_reservation(order, source="webhook"):
             reservation.save(update_fields=["status"])
 
         transition_order_status(order, Order.Status.PAID, source=source)
+        dispatch_order_placed(order.id)
 
     return True
 
