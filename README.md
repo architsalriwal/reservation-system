@@ -7,8 +7,8 @@ correct even when a dependency (Stripe, the DB, a worker process) fails
 mid-transaction.**
 
 The storefront (catalog, cart, checkout UI) is a thin demo surface. It
-exists so the five properties below are observable end-to-end, not because
-this project is trying to be a general-purpose e-commerce app.
+exists so the properties below are observable end-to-end, not because this
+project is trying to be a general-purpose e-commerce app.
 
 ## The problem
 
@@ -21,7 +21,7 @@ that has to absorb a much larger number of doomed requests, and reasoning
 explicitly about every place that lock can race against something else
 (a TTL sweep, a webhook, a retried request).
 
-## The five properties, and how each is actually enforced
+## The properties, and how each is actually enforced
 
 ### 1. Concurrent overselling prevention
 
@@ -114,6 +114,25 @@ Two concrete failure modes, both with a reproduction test:
   mutation logic checks current state before acting. See
   [`test_sweep_recovers_event_claimed_but_never_processed`](backend/apps/orders/tests/test_webhook_idempotency.py).
 
+### 6. Checkout idempotency (not just the webhook)
+
+The Stripe webhook's idempotency (property 3) only protects against Stripe
+redelivering the *same* event twice. It says nothing about a client retrying
+the *original* `POST /checkout/` — a flaky network, a double-click that
+slips past the disabled button, a proxy replaying a POST it never got a
+response for. Each of those is a fresh HTTP request with no shared event ID
+to dedupe on, so it needs its own guarantee: a client-generated
+`Idempotency-Key` header, claimed via the same DB-unique-constraint pattern
+as the webhook (`CheckoutIdempotencyKey`, unique on `(user, key)`). The
+claiming insert happens *before* `begin_checkout()` ever reserves stock, so
+a losing concurrent request with the same key is rejected before it
+reserves anything — there's no reservation to clean up on the losing side.
+A retry after a real failure (out of stock) releases the key, so it doesn't
+permanently block a legitimate second attempt. See
+[`test_checkout_idempotency.py`](backend/apps/orders/tests/test_checkout_idempotency.py),
+including a 10-thread proof that a shared key across concurrent requests
+still produces exactly one order.
+
 ## Known limitation: Redis/Postgres drift
 
 The Redis availability cache is a write-through cache updated after every
@@ -137,11 +156,14 @@ backend/
   apps/
     accounts/      Firebase ID-token verification -> User -> SimpleJWT (rotation + blacklist)
     catalog/       Product, Category - descriptive fields + stock/reserved counters
-    orders/        Order, OrderItem, Reservation, StripeEvent, OrderStatusEvent
-                    OWNS all stock mutation, checkout, payment, webhook, TTL-expiry logic
+    orders/        Order, OrderItem, Reservation, StripeEvent, OrderStatusEvent,
+                    CheckoutIdempotencyKey. OWNS all stock mutation, checkout,
+                    payment, webhook, TTL-expiry logic
     realtime/      Channels consumer + publish() helper, no models
     storefront/    Thin session-backed cart, calls apps.orders.services only
-frontend/          React (Vite) - catalog, cart, checkout, live order status, Firebase login
+    assistant/     RAG product search + Gemini function-calling chat
+frontend/          React (Vite) - catalog, cart, checkout, live order status,
+                    Firebase login, a floating shopping-assistant widget
 load_test/         Locust script + JWT-seeding management command
 ```
 
@@ -153,14 +175,52 @@ mutated inside `apps/orders/services.py`; nothing else writes to
 `{product_id: qty}` structure in the session — not a DB model, so it can't
 grow its own competing notion of a pending order.
 
+## AI layer: RAG product search + real function calling
+
+A floating shopping-assistant widget, backed by Gemini, with three tools it
+can actually call against live backend logic — not a search box with an LLM
+wrapper glued on:
+
+- **`search_products`** — the RAG piece. Each product's name/category/
+  description is embedded once (Gemini's embedding model, 768 dims, stored
+  in Postgres via `pgvector` with an HNSW index) and a query is embedded the
+  same way at request time, matched by cosine distance. Verified this
+  actually captures meaning, not just keywords: "something for a morning
+  run" correctly surfaces the running shoes, "carry my laptop to work"
+  surfaces the backpack, neither query using the product's literal name.
+- **`add_to_cart`** — calls the exact same `apps.storefront.cart` functions
+  the regular cart UI uses. The model never touches session state directly.
+- **`get_order_status`** — scoped strictly to the requesting user
+  (`Order.objects.get(pk=order_id, user=user)`, never trusts the ID alone).
+  An unauthenticated request for someone else's order gets a clean refusal,
+  not the order's data.
+
+`apps/assistant/chat.py` runs a manual function-calling loop (detect a
+function call in Gemini's response, run the real tool, feed the result back,
+repeat) rather than the SDK's automatic-function-calling helper, so the
+exact request/response at each turn stays inspectable. It also degrades
+gracefully on a Gemini API error (quota exhaustion, an outage) instead of
+500ing — the assistant is a layer on top of a working store, not something
+checkout depends on, the same "graceful degradation over a dependency
+outage" pattern used for Stripe.
+
+Model choice was verified live, not assumed from training-data-era names:
+`gemini-2.5-flash` turned out to be retired for new users, and the
+full-size `gemini-3.6-flash` has a 20-request/day free-tier quota that live
+testing burned through in minutes — `gemini-flash-lite-latest` is the
+default for a much higher free-tier ceiling at more than enough quality for
+short tool-calling replies.
+
 ## Running it
 
 ```bash
-docker compose up -d                       # Postgres + Redis
+docker compose up -d                       # Postgres (pgvector) + Redis
 cd backend
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
-cp .env.example .env                       # fill in Firebase/Stripe keys for real auth/payment
+cp .env.example .env                       # fill in Firebase/Stripe/Gemini keys for the full flow
 python manage.py migrate
+python manage.py seed_demo_products        # catalog with icon art + INR pricing
+python manage.py backfill_embeddings       # needs GEMINI_API_KEY - powers the AI search
 python manage.py runserver
 
 cd ../frontend
