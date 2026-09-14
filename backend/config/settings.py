@@ -137,6 +137,14 @@ CORS_ALLOWED_ORIGINS = config(
 )
 CORS_ALLOW_CREDENTIALS = True
 
+# django-cors-headers' default allowed-headers list doesn't include custom
+# headers - without this, the browser's CORS preflight silently rejects the
+# Idempotency-Key header the checkout request sends, before it ever reaches
+# CheckoutView.
+from corsheaders.defaults import default_headers  # noqa: E402
+
+CORS_ALLOW_HEADERS = list(default_headers) + ["idempotency-key"]
+
 # --- Firebase ---
 # Path to the service-account JSON, provided via env var and never committed to git.
 FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default="")

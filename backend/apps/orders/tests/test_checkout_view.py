@@ -24,7 +24,7 @@ def test_checkout_degrades_gracefully_when_stripe_is_unreachable():
     client.post("/api/cart/items/", {"product_id": product.id, "quantity": 1}, format="json")
 
     with patch("stripe.checkout.Session.create", side_effect=stripe.error.APIConnectionError("down")):
-        resp = client.post("/api/checkout/")
+        resp = client.post("/api/checkout/", HTTP_IDEMPOTENCY_KEY="test-key-1")
 
     assert resp.status_code == 502
     assert resp.data["checkout_url"] is None

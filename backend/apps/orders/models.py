@@ -88,6 +88,37 @@ class StripeEvent(models.Model):
         return f"{self.stripe_event_id} ({self.event_type})"
 
 
+class CheckoutIdempotencyKey(models.Model):
+    """Guards POST /checkout/ against duplicate orders from a retried
+    request (flaky network, double-click that slips past the disabled
+    button, a proxy replaying a POST it didn't get a response for).
+
+    Same claim-before-mutate pattern as StripeEvent: the unique constraint
+    on (user, key) is the actual guarantee, not an app-level exists()
+    check, which would have its own race between two concurrent requests
+    carrying the same key. The claiming INSERT happens before
+    begin_checkout() ever reserves stock, so a losing concurrent request
+    is rejected before it can reserve anything - no reservation to clean
+    up afterward.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="checkout_keys")
+    key = models.CharField(max_length=255)
+    order = models.ForeignKey(
+        Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="idempotency_keys"
+    )
+    checkout_url = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "key"], name="unique_user_checkout_idempotency_key")
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.key}"
+
+
 class OrderStatusEvent(models.Model):
     """Append-only audit log. The only path that triggers a WebSocket push."""
 

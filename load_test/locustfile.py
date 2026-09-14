@@ -16,6 +16,7 @@ the project README as the proof artifact.
 
 import json
 import os
+import uuid
 
 from locust import HttpUser, between, task
 
@@ -45,7 +46,14 @@ class Buyer(HttpUser):
         self.client.post(
             "/api/cart/items/", json={"product_id": PRODUCT_ID, "quantity": 1}, name="/api/cart/items/"
         )
-        with self.client.post("/api/checkout/", name="/api/checkout/", catch_response=True) as resp:
+        # A fresh key per request: each is a genuinely new checkout attempt
+        # for the race proof, not a retry of a prior one - reusing a key
+        # here would make CheckoutView dedupe requests we actually want to
+        # race independently.
+        headers = {"Idempotency-Key": str(uuid.uuid4())}
+        with self.client.post(
+            "/api/checkout/", name="/api/checkout/", headers=headers, catch_response=True
+        ) as resp:
             # 201/502 both mean the reservation succeeded (502 = Stripe
             # session creation failed after the reservation committed, see
             # CheckoutView's graceful-degradation handling); 409 means this
