@@ -12,7 +12,7 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Product.objects.select_related("category").all()
+    queryset = Product.objects.select_related("category").filter(is_active=True)
     serializer_class = ProductSerializer
     permission_classes = [AllowAny]
     lookup_field = "slug"

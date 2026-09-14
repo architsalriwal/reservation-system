@@ -27,8 +27,14 @@ class Product(models.Model):
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="products"
     )
+    # TextField rather than URLField: this holds either a real hosted URL or
+    # an inline `data:image/svg+xml,...` URI for the built-in icon art (see
+    # apps.catalog.demo_icons), and those routinely run well past URLField's
+    # default 200-char limit and aren't valid per URLField's URL regex anyway.
+    image_url = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    currency = models.CharField(max_length=3, default="USD")
+    currency = models.CharField(max_length=3, default="INR")
+    is_active = models.BooleanField(default=True, help_text="Unlisted products stay for order history but drop out of the public catalog.")
 
     stock = models.PositiveIntegerField(default=0)
     reserved = models.PositiveIntegerField(default=0)

@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 
 import api, { getAccessToken } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { formatINR } from "../utils/currency";
 
 export default function OrderStatus() {
   const { orderId } = useParams();
@@ -55,27 +56,47 @@ export default function OrderStatus() {
   }, [orderId, authLoading, isAuthenticated]);
 
   if (error) return <p className="error">{error}</p>;
-  if (!order) return <p>Loading order...</p>;
+  if (!order) return <p className="center-loading">Loading order...</p>;
 
   const status = liveStatus ?? order.status;
 
   return (
-    <div className="order-status">
-      <h1>Order {order.id}</h1>
-      {searchParams.get("success") === "true" && <p>Payment received - thank you!</p>}
-      {searchParams.get("canceled") === "true" && <p>Checkout was canceled.</p>}
-      <p>
-        Status: <strong>{status}</strong>
-        {liveStatus && <span className="live-badge"> (live)</span>}
-      </p>
-      <ul>
-        {order.items.map((item) => (
-          <li key={item.id}>
-            {item.product.name} x {item.quantity}
-          </li>
-        ))}
-      </ul>
-      <p>Total: {order.total_amount}</p>
+    <div className="order-shell">
+      {searchParams.get("success") === "true" && (
+        <p className="success-banner">Payment received — thank you!</p>
+      )}
+      {searchParams.get("canceled") === "true" && (
+        <p className="canceled-banner">Checkout was canceled.</p>
+      )}
+
+      <div className="order-card">
+        <div className="order-card-header">
+          <div>
+            <h2>Order status</h2>
+            <span className="order-id">{order.id}</span>
+          </div>
+          <span className={`status-pill ${status}`}>
+            {liveStatus && <span className="live-dot" />}
+            {status.replace("_", " ")}
+          </span>
+        </div>
+
+        <ul className="order-items">
+          {order.items.map((item) => (
+            <li key={item.id} className="order-item-row">
+              <span>
+                {item.product.name} × {item.quantity}
+              </span>
+              <span>{formatINR(item.unit_price_snapshot * item.quantity)}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="order-total">
+          <span>Total</span>
+          <span>{formatINR(order.total_amount)}</span>
+        </div>
+      </div>
     </div>
   );
 }

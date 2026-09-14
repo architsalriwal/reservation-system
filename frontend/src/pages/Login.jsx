@@ -9,6 +9,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Navigating during render (calling navigate() directly in the component
   // body) triggers React's "Cannot update a component while rendering a
@@ -27,37 +28,74 @@ export default function Login() {
 
   async function withErrorHandling(action) {
     setError(null);
+    setSubmitting(true);
     try {
       await action();
       navigate("/");
     } catch (err) {
       setError(err.message ?? "Login failed.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <div className="login">
-      <h1>Sign in</h1>
-      {error && <p className="error">{error}</p>}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          withErrorHandling(() => loginWithEmailAndPassword(email, password));
-        }}
-      >
-        <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <button type="submit">Sign in</button>
-        <button type="button" onClick={() => withErrorHandling(() => signUpWithEmailAndPassword(email, password))}>
-          Sign up
+    <div className="auth-shell">
+      <div className="auth-card">
+        <h1>Welcome back</h1>
+        <p className="auth-sub">Sign in to check out and track your orders live.</p>
+        {error && <p className="error">{error}</p>}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            withErrorHandling(() => loginWithEmailAndPassword(email, password));
+          }}
+        >
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          <div className="auth-actions">
+            <button className="btn btn-primary btn-block" type="submit" disabled={submitting}>
+              {submitting ? "Signing in..." : "Sign in"}
+            </button>
+            <button
+              className="btn btn-secondary btn-block"
+              type="button"
+              disabled={submitting}
+              onClick={() => withErrorHandling(() => signUpWithEmailAndPassword(email, password))}
+            >
+              Create an account
+            </button>
+          </div>
+        </form>
+        <div className="auth-divider">or</div>
+        <button
+          className="btn btn-secondary btn-block"
+          disabled={submitting}
+          onClick={() => withErrorHandling(loginWithGoogle)}
+        >
+          Continue with Google
         </button>
-      </form>
-      <button onClick={() => withErrorHandling(loginWithGoogle)}>Sign in with Google</button>
+      </div>
     </div>
   );
 }
