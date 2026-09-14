@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "apps.orders",
     "apps.realtime",
     "apps.storefront",
+    "apps.assistant",
 ]
 
 MIDDLEWARE = [
@@ -148,3 +149,8 @@ STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="")
 RESERVATION_TTL_MINUTES = config("RESERVATION_TTL_MINUTES", default=15, cast=int)
 
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
+
+# --- Gemini (RAG product search + function-calling assistant) ---
+GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
+GEMINI_CHAT_MODEL = config("GEMINI_CHAT_MODEL", default="gemini-2.5-flash")
+GEMINI_EMBEDDING_MODEL = config("GEMINI_EMBEDDING_MODEL", default="gemini-embedding-001")

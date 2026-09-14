@@ -1,5 +1,6 @@
 import { Link, Route, Routes } from "react-router-dom";
 
+import AssistantChat from "./components/AssistantChat";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CartProvider, useCart } from "./context/CartContext";
 import Cart from "./pages/Cart";
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="/orders/:orderId" element={<OrderStatus />} />
           </Routes>
         </main>
+        <AssistantChat />
       </CartProvider>
     </AuthProvider>
   );
