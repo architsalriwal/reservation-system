@@ -101,10 +101,17 @@ and *nothing* on an unrelated save to the same row.
 Two concrete failure modes, both with a reproduction test:
 
 - **Stripe unreachable after the reservation committed.** `CheckoutView`
-  wraps the Stripe call separately, with a short request timeout, and on
-  failure returns `502` with the order otherwise intact — the reservation
-  isn't touched, isn't lost, and isn't double-created. See
-  [`test_checkout_view.py`](backend/apps/orders/tests/test_checkout_view.py).
+  calls Stripe through a real circuit breaker (closed/open/half-open, backed
+  by Redis so every server process shares the same view of "is Stripe
+  healthy"), not just a try/except with a timeout. After 5 straight
+  failures it stops even attempting the call for 30 seconds and returns
+  `502` immediately — the difference that actually matters: a plain
+  try/except still calls Stripe on every single request, even during a
+  known outage. See
+  [`test_circuit_breaker.py`](backend/apps/orders/tests/test_circuit_breaker.py)
+  and [`test_checkout_view.py`](backend/apps/orders/tests/test_checkout_view.py)
+  (which proves the 6th request never touches Stripe at all). Either way,
+  the reservation itself is untouched, not lost or double-created.
 - **A worker crashes between claiming a webhook event and finishing its
   effect.** Because the claim-insert and the mutation are separate
   transactions, a crash there leaves a `StripeEvent` row with
