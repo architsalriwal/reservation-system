@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.orders.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from apps.orders.exceptions import OutOfStock
 from apps.orders.models import CheckoutIdempotencyKey, Order, OrderStatusEvent
 from apps.orders.serializers import OrderSerializer
@@ -16,6 +17,11 @@ from apps.storefront import cart as cart_ops
 # request open - the reservation has already committed by this point, so a
 # Stripe outage here is a payment-initiation failure, not a stock-safety one.
 STRIPE_REQUEST_TIMEOUT_SECONDS = 5
+
+# After 5 straight Stripe failures, stop even trying for 30s and fail
+# instantly instead - during a real Stripe outage this saves every request
+# in that window from waiting out a timeout it was going to hit anyway.
+stripe_breaker = CircuitBreaker("stripe", failure_threshold=5, cooldown_seconds=30)
 
 
 class CheckoutView(APIView):
@@ -75,7 +81,8 @@ class CheckoutView(APIView):
         checkout_url = None
         stripe.api_key = settings.STRIPE_SECRET_KEY
         try:
-            session = stripe.checkout.Session.create(
+            session = stripe_breaker.call(
+                stripe.checkout.Session.create,
                 mode="payment",
                 line_items=[
                     {
@@ -93,6 +100,15 @@ class CheckoutView(APIView):
                 cancel_url=f"{settings.FRONTEND_URL}/orders/{order.id}?canceled=true",
             )
             checkout_url = session.url
+        except CircuitBreakerOpen:
+            # Stripe has failed repeatedly in the last 30s - don't even try,
+            # just degrade immediately. The reservation is untouched either way.
+            OrderStatusEvent.objects.create(
+                order=order,
+                from_status=order.status,
+                to_status="stripe_circuit_open",
+                source="checkout",
+            )
         except stripe.error.StripeError:
             # The reservation already committed and holds the stock under its
             # normal TTL - a Stripe outage here degrades to "payment session
@@ -109,6 +125,13 @@ class CheckoutView(APIView):
         key_record.save(update_fields=["order", "checkout_url"])
 
         cart_ops.clear(request.session)
+        # Explicit save rather than relying on SessionMiddleware's automatic
+        # save-on-response: found via testing that repeated checkout calls in
+        # the same session could see a stale, un-cleared cart on the very
+        # next request without this - not worth leaving as an implicit
+        # "the framework will handle it" for something that means a user's
+        # already-purchased items silently reappearing in their cart.
+        request.session.save()
 
         return Response(
             {"order": OrderSerializer(order).data, "checkout_url": checkout_url},
