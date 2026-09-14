@@ -14,6 +14,7 @@ DEBUG = config("DJANGO_DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -128,9 +129,12 @@ SIMPLE_JWT = {
 }
 
 # --- CORS ---
+# credentials are required so the session cookie backing the cart survives
+# cross-origin requests from the SPA dev server.
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv()
 )
+CORS_ALLOW_CREDENTIALS = True
 
 # --- Firebase ---
 # Path to the service-account JSON, provided via env var and never committed to git.

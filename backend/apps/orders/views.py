@@ -9,17 +9,21 @@ from apps.orders.exceptions import OutOfStock
 from apps.orders.models import Order
 from apps.orders.serializers import OrderSerializer
 from apps.orders.services import begin_checkout
+from apps.storefront import cart as cart_ops
 
 
 class CheckoutView(APIView):
-    """Begins checkout for the caller's cart: reserves stock, creates a
-    pending order, and returns a Stripe Checkout session to redirect to.
+    """Begins checkout for the caller's session cart: reserves stock, creates
+    a pending order, and returns a Stripe Checkout session to redirect to.
+    The session cart (not client-supplied line items) is the source of truth
+    for what's being purchased.
     """
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        cart_items = [(item["product_id"], item["quantity"]) for item in request.data.get("items", [])]
+        cart = cart_ops.get_cart(request.session)
+        cart_items = [(int(product_id), quantity) for product_id, quantity in cart.items()]
         if not cart_items:
             return Response({"detail": "Cart is empty."}, status=400)
 
@@ -49,6 +53,8 @@ class CheckoutView(APIView):
             success_url=f"{settings.FRONTEND_URL}/orders/{order.id}?success=true",
             cancel_url=f"{settings.FRONTEND_URL}/orders/{order.id}?canceled=true",
         )
+
+        cart_ops.clear(request.session)
 
         return Response(
             {"order": OrderSerializer(order).data, "checkout_url": session.url}, status=201
