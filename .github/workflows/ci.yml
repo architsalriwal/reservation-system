@@ -10,7 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # Plain postgres:16 lacks the `vector` extension the catalog app's
+        # embedding column needs - migrations fail on it with "extension
+        # 'vector' is not available" the moment they reach that migration.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: reservation_system
           POSTGRES_USER: postgres
