@@ -19,6 +19,9 @@ media/
 *firebase*adminsdk*.json
 *serviceAccount*.json
 secrets/
+deploy/backend.env
+deploy/root.env
+deploy/*.pem
 
 # Node / React
 node_modules/

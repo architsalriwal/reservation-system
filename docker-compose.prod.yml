@@ -7,7 +7,9 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Same pgvector-enabled image as local dev - the AI product-search
+    # feature needs the `vector` extension, which plain postgres:16 doesn't have.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -83,19 +85,37 @@ services:
       redis:
         condition: service_healthy
 
-  frontend:
-    build: ./frontend
-
   nginx:
     image: nginx:1.27-alpine
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - static_files:/code/staticfiles:ro
+      - ./frontend/dist:/usr/share/nginx/frontend:ro
+      # TLS certs come from certbot running on the HOST (not in this
+      # compose file) via `certbot renew`, writing to the standard
+      # /etc/letsencrypt path - mounted read-only so nginx picks up
+      # renewals automatically on its next reload, without rebuilding
+      # or recreating this container.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # A bind mount (host directory), not a named volume - the renewal
+      # cron job runs certbot directly on the host, so it needs to write
+      # ACME challenge files to a real host path that nginx, inside the
+      # container, is also looking at. A named volume would put those
+      # files somewhere under /var/lib/docker/volumes instead, invisible
+      # to a plain host-side certbot process.
+      - ./certbot-webroot:/var/www/certbot
     depends_on:
       - web
-      - frontend
+
+  # No certbot service here deliberately: it runs on the host via a cron
+  # job (see deploy/renew-cert.sh) instead of as a container, because the
+  # only thing it needs to do is (a) write to the webroot nginx already
+  # serves and (b) reload nginx after renewing - both are simpler as a
+  # host-side cron job than coordinating a second container's lifecycle
+  # with this one for a task that runs twice a year.
 
 volumes:
   postgres_data:

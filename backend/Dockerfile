@@ -14,7 +14,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN adduser --disabled-password --no-create-home appuser
+# appuser needs to own the whole working directory, not just
+# /code/staticfiles: celery beat writes its schedule file to the cwd
+# (celerybeat-schedule), which fails with Permission denied against a
+# root-owned /code just like collectstatic did against a root-owned
+# staticfiles/. Chowning /code as a whole (before the staticfiles volume
+# overlay attaches) covers both, and anything else that assumes cwd is
+# writable, in one place instead of chasing each write site individually.
+RUN adduser --disabled-password --no-create-home appuser \
+    && chown -R appuser:appuser /code
 USER appuser
 
 EXPOSE 8000
