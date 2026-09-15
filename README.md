@@ -48,6 +48,16 @@ the loser once, immediately, with an accurate answer.
 - [`load_test/locustfile.py`](load_test/locustfile.py) — the same race over
   real HTTP, at a larger scale. See **Load test results** below for actual
   numbers from a real run.
+- Two independent, real browser sessions (own login, own cart, own session
+  cookie) racing to check out the last unit of stock at the same instant —
+  one wins, one is rejected in real time, no page refresh:
+
+  ![Two buyers racing for the last unit of stock — one gets "Insufficient stock.", the other reaches a real Stripe checkout session](docs/oversell-race-demo.gif)
+
+  Recorded by [`deploy/race_demo.mjs`](deploy/race_demo.mjs) against the real
+  dev stack (not mocked) — signs up two real Firebase users, adds the same
+  stock=1 product to two separate carts, and clicks Checkout on both at the
+  same instant.
 
 ### 2. Reservation expiry (TTL)
 
