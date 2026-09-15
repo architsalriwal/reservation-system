@@ -94,6 +94,9 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - static_files:/code/staticfiles:ro
       - ./frontend/dist:/usr/share/nginx/frontend:ro
+      # Static personal portfolio site at the apex domain - see nginx.conf's
+      # architsalriwal.dev server block. Plain static files, no build step.
+      - ./portfolio-site:/usr/share/nginx/portfolio:ro
       # TLS certs come from certbot running on the HOST (not in this
       # compose file) via `certbot renew`, writing to the standard
       # /etc/letsencrypt path - mounted read-only so nginx picks up
