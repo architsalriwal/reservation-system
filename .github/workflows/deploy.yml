@@ -1,9 +1,13 @@
 name: Deploy to AWS EC2
 
+# Manual trigger only, deliberately - the production host is a t3.micro that
+# has locked up under load more than once (burstable-CPU-credit exhaustion,
+# see the README). An unattended `docker compose up -d --build` firing on
+# every push, with no one watching, is exactly the kind of surprise that box
+# can't currently absorb. Click "Run workflow" when you actually mean to
+# deploy, same as every deploy this project has done so far.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   deploy:
@@ -20,7 +24,12 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            APP_DIR=/home/${{ secrets.EC2_USER }}/reservation-system
+            # Matches the actual layout on the server - the app lives in
+            # ~/app, not ~/reservation-system (this drifted from reality
+            # after the project was deployed by hand; workflow_dispatch-only
+            # means it's safe to leave unwired until someone deliberately
+            # configures EC2_HOST/EC2_USER/EC2_SSH_KEY and runs it).
+            APP_DIR=/home/${{ secrets.EC2_USER }}/app
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
             if [ -d .git ]; then
@@ -28,11 +37,4 @@ jobs:
             else
               git clone ${{ github.server_url }}/${{ github.repository }}.git .
             fi
-            # docker-compose.prod.yml lives at the repo root and its service
-            # build contexts (./backend, ./frontend) are relative to it - the
-            # previous project's Dockerfile pointed at a path
-            # (ONLINE_SHOPPING/manage.py) that didn't exist anywhere in the
-            # repo, so the container crash-looped on first boot. Running
-            # compose from the actual repo root with matching build contexts
-            # is what that bug was missing.
             docker compose -f docker-compose.prod.yml up -d --build
