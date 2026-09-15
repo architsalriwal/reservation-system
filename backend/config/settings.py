@@ -13,6 +13,12 @@ SECRET_KEY = config("DJANGO_SECRET_KEY", default="dev-insecure-secret-key-change
 DEBUG = config("DJANGO_DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
+# Required by Django 4+ for any POST over HTTPS from a real domain (e.g.
+# the admin login form) - without it, CSRF validation rejects the request
+# even though ALLOWED_HOSTS already permits it. Empty by default since
+# local dev is plain HTTP, where this check doesn't apply.
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
+
 INSTALLED_APPS = [
     "daphne",
     "django.contrib.admin",
