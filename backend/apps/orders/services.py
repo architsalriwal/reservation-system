@@ -88,19 +88,27 @@ def transition_order_status(order, new_status, source):
 def confirm_reservation(order, source="webhook"):
     """Marks an order's active reservations CONFIRMED and the order PAID.
 
-    Locks Reservation -> Order -> Product in the same order the expiry sweep
-    uses, so Postgres serializes the two paths instead of racing on state.
+    Locks Reservation, then Order - the same order expire_single_reservation
+    uses - so a webhook confirming payment and the expiry sweep releasing the
+    same order's stock can never deadlock by each holding one lock and
+    waiting on the other. (Neither path locks Product here: a paid order's
+    `reserved` count is never given back, so there's nothing on Product for
+    this function to touch - only the expiry path, which does release stock,
+    needs that third lock.)
+
     Returns False (no-op) if the order already moved past pending_payment —
     e.g. it already expired, or this event was already processed.
     """
     with transaction.atomic():
+        reservations = list(
+            Reservation.objects.select_for_update().filter(
+                order_id=order.pk, status=Reservation.Status.ACTIVE
+            )
+        )
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status != Order.Status.PENDING_PAYMENT:
             return order.status == Order.Status.PAID
 
-        reservations = list(
-            Reservation.objects.select_for_update().filter(order=order, status=Reservation.Status.ACTIVE)
-        )
         for reservation in reservations:
             reservation.status = Reservation.Status.CONFIRMED
             reservation.save(update_fields=["status"])

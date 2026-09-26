@@ -69,7 +69,12 @@ services:
       - firebase_credentials:/secrets:ro
     # One prefork child instead of the default (one per CPU): on a 1GB box
     # the extra child was the process the OOM killer kept picking off.
-    command: celery -A config worker --loglevel=info --concurrency=1
+    # --max-memory-per-child (KB) is Celery's own leak guard: once the child
+    # exceeds this RSS, Celery kills and respawns it *after its current task
+    # finishes* - a clean, task-safe recycle - instead of waiting for the
+    # kernel's OOM killer to do it mid-task, which is what happened on Sep 17.
+    # 200MB gives headroom over the ~150MB the worker normally sits at.
+    command: celery -A config worker --loglevel=info --concurrency=1 --max-memory-per-child=200000
     depends_on:
       postgres:
         condition: service_healthy

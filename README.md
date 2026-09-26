@@ -67,12 +67,21 @@ A Celery beat task (`expire_reservations`, every 60s) finds `ACTIVE`
 reservations past `expires_at` and fans out to a per-reservation task, so
 one locked row can't stall the whole sweep.
 
-The interesting part is the race against a concurrent webhook: both paths
-lock `Reservation → Order → Product` in the same order, so Postgres
-serializes them. Whichever gets there first wins; the other sees the state
-has already moved and no-ops. See
+The interesting part is the race against a concurrent webhook: `confirm_reservation()`
+(the webhook path) locks `Reservation → Order`; the expiry task locks
+`Reservation → Order → Product` (it alone needs the Product lock, since it's the
+only one of the two that gives stock back). Same order on the two locks they
+*do* share is what matters — a webhook confirming payment and the sweep
+expiring it can never each hold one lock while waiting on the other. This
+wasn't always true: an earlier version locked `Order → Reservation` on the
+webhook side, and firing both paths at the same order at once reliably
+produced a real Postgres `deadlock detected` (caught while writing this
+README's own accuracy check, not in production). See
 [`test_reservation_expiry.py`](backend/apps/orders/tests/test_reservation_expiry.py)
-for both the plain-expiry case and the race case.
+for the plain-expiry case, the "webhook already won" case, and
+`test_webhook_and_expiry_race_on_the_same_order_without_deadlocking`, which
+fires both concurrently via real threads and asserts neither blocks and the
+result is always one consistent outcome.
 
 ### 3. Idempotent webhook handling
 
