@@ -27,7 +27,13 @@ def _set_refresh_cookie(response, refresh_token):
 
 
 class FirebaseLoginView(APIView):
-    """Exchanges a verified Firebase ID token for a SimpleJWT pair.
+    """FLOW STEP 2 (backend half): exchanges a verified Firebase ID token for
+    a SimpleJWT pair. This is what frontend/src/services/auth.js's
+    exchangeFirebaseToken() calls. By the time a request reaches here,
+    Firebase has already confirmed the user's identity on the FRONTEND side
+    (step 1) - this view's whole job is to independently re-verify that
+    proof on the SERVER side (never trust a claim from the browser without
+    checking it yourself) and then mint OUR OWN tokens.
 
     The access token goes in the JSON body (kept in memory by the frontend,
     never persisted, so it's not reachable by an XSS payload reading
@@ -41,6 +47,9 @@ class FirebaseLoginView(APIView):
         serializer = FirebaseLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # The actual cryptographic check happens in apps/accounts/firebase.py
+        # - this call either returns the token's real, verified contents, or
+        # raises, meaning the token was forged/tampered/expired.
         try:
             decoded = verify_id_token(serializer.validated_data["id_token"])
         except firebase_auth.InvalidIdTokenError:
@@ -51,6 +60,9 @@ class FirebaseLoginView(APIView):
         firebase_uid = decoded["uid"]
         email = decoded.get("email", "")
 
+        # First time this Firebase account has ever logged in to OUR app ->
+        # create a matching local User row. Every later login just finds the
+        # same row again via this same firebase_uid.
         user, _ = User.objects.get_or_create(
             firebase_uid=firebase_uid,
             defaults={"username": firebase_uid, "email": email},
@@ -59,6 +71,9 @@ class FirebaseLoginView(APIView):
             user.email = email
             user.save(update_fields=["email"])
 
+        # This is where OUR tokens get created - nothing to do with Firebase
+        # anymore from this point on. SimpleJWT mints a linked access+refresh
+        # pair for this user.
         refresh = RefreshToken.for_user(user)
         response = Response({"access": str(refresh.access_token), "user": UserSerializer(user).data})
         _set_refresh_cookie(response, refresh)
@@ -66,8 +81,20 @@ class FirebaseLoginView(APIView):
 
 
 class TokenRefreshView(APIView):
-    """Reads the refresh token from the httpOnly cookie (never the body),
-    rotates it, and returns a fresh access token plus the new cookie.
+    """FLOW STEP 5 (backend half) and also what auth.js's restoreSession()
+    (STEP 0) calls on page load. Called by frontend/src/services/api.js's
+    response interceptor whenever an access token has expired (15 minutes
+    after login, SIMPLE_JWT.ACCESS_TOKEN_LIFETIME). Note this view never
+    looks at the request BODY for the refresh token - only the httpOnly
+    cookie, which the browser attaches automatically and which JavaScript
+    can never read or forge the content of.
+
+    "Rotates" the refresh token: every time it's used, the OLD one is
+    blacklisted (made permanently unusable, even if someone had copied it)
+    and a brand NEW one is issued. This limits how long a stolen refresh
+    token stays useful - using it once to refresh invalidates it, so an
+    attacker who stole an old cookie and the real user both using it is a
+    detectable, blockable collision instead of silent parallel access.
     """
 
     permission_classes = [AllowAny]
@@ -96,6 +123,11 @@ class TokenRefreshView(APIView):
 
 
 class LogoutView(APIView):
+    """FLOW STEP 6 (backend half): called by auth.js's logout(). Blacklists
+    the refresh token so it can never be used again (even though it hasn't
+    expired yet), then deletes the cookie itself from the browser.
+    """
+
     permission_classes = [AllowAny]
 
     def post(self, request):

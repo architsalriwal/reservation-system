@@ -10,7 +10,9 @@ _app_lock = threading.Lock()
 
 
 def get_firebase_app():
-    """Lazily initializes the Firebase Admin app from the configured credentials path.
+    """Called from verify_id_token() below (never directly from a view) the
+    first time ANY login happens after the server starts. Lazily initializes
+    the Firebase Admin app from the configured credentials path.
 
     Deliberately a single function reading a single settings value, unlike the
     previous project where the settings path and the path actually used by the
@@ -45,7 +47,12 @@ def get_firebase_app():
 
 
 def verify_id_token(id_token):
-    """Verifies a Firebase ID token and returns its decoded claims.
+    """FLOW STEP 2a: the actual verification called from
+    FirebaseLoginView.post() (apps/accounts/views.py). This asks the
+    Firebase Admin SDK to cryptographically check that the token really was
+    issued by Google for this exact project, and hasn't expired - the
+    frontend's claim "Firebase says I'm logged in" is never trusted on its
+    own; this is where it's independently confirmed server-side.
 
     Raises firebase_admin.auth.InvalidIdTokenError (or a subclass) on failure —
     callers should let that propagate into a 401, not swallow it silently.
