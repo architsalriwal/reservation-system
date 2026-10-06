@@ -1,3 +1,27 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# This is where every database table used by the ordering/payment system is
+# DEFINED - nothing in here runs any logic; it only describes the shape of
+# the data. The actual logic that creates and changes rows in these tables
+# lives in apps/orders/services.py and apps/orders/tasks.py. Think of this
+# file as the blueprint, and those other files as the people doing the work
+# according to that blueprint.
+#
+# Five tables, each with a specific, narrow job:
+#   Order              - one purchase attempt, and its current status
+#   OrderItem           - one line item on an order (which product, how many,
+#                          at what price) - PERMANENT history, never deleted
+#   Reservation          - a TEMPORARY hold on stock, separate from OrderItem
+#                          on purpose (see its own docstring below)
+#   StripeEvent          - "have we already processed this exact webhook?"
+#   CheckoutIdempotencyKey - "has this exact checkout click already been
+#                          handled?" (a different problem from StripeEvent -
+#                          see that model's own docstring)
+#   OrderStatusEvent      - a permanent log of every status change an order
+#                          ever went through
+# ============================================================================
+
 import uuid
 
 from django.conf import settings
@@ -5,16 +29,30 @@ from django.db import models
 
 
 class Order(models.Model):
+    # models.TextChoices defines a fixed, named set of allowed values for
+    # the `status` field below - Python code elsewhere refers to these as
+    # Order.Status.PAID, Order.Status.EXPIRED, etc., instead of writing the
+    # raw string "paid" everywhere (which would be easy to typo).
     class Status(models.TextChoices):
         PENDING_PAYMENT = "pending_payment", "Pending payment"
         PAID = "paid", "Paid"
         PROCESSING = "processing", "Processing"
         SHIPPED = "shipped", "Shipped"
         DELIVERED = "delivered", "Delivered"
-        CANCELED = "canceled", "Canceled"
+        CANCELED = "canceled", "Canceled"  # defined, but nothing in this project currently sets an order to this
         EXPIRED = "expired", "Expired"
 
+    # A UUID (a long random unique identifier, like
+    # "f43348ec-2456-47a1-8e8c-a44f91a67e67") instead of a simple counting
+    # number (1, 2, 3...) as the primary key. One practical reason: order
+    # IDs show up in URLs (e.g. the Stripe success_url) and WebSocket
+    # channel names - a UUID can't be easily guessed or enumerated by
+    # incrementing a number, the way a sequential ID could.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # on_delete=SET_NULL + null=True: if the User who placed this order is
+    # ever deleted, keep the Order row around (for historical/accounting
+    # purposes) but blank out who it belonged to, rather than deleting the
+    # order too.
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders"
     )
@@ -31,9 +69,22 @@ class Order(models.Model):
 
 
 class OrderItem(models.Model):
+    """One line item on an order - "2 of product X, at ₹899 each." This is
+    PERMANENT order history, unlike Reservation below - an OrderItem is
+    never deleted or expired, even if the order itself never gets paid.
+    """
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    # on_delete=PROTECT: refuses to let a Product be deleted from the
+    # database at all if any OrderItem still references it - protecting
+    # historical order records from silently breaking/disappearing just
+    # because a product was later removed from the catalog.
     product = models.ForeignKey("catalog.Product", on_delete=models.PROTECT, related_name="order_items")
     quantity = models.PositiveIntegerField()
+    # unit_price_snapshot: the product's price AT THE MOMENT this order was
+    # placed, copied here permanently. If the product's price changes next
+    # week, this old order's total still correctly reflects what was
+    # actually charged at the time - it never silently changes.
     unit_price_snapshot = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
@@ -45,6 +96,14 @@ class Reservation(models.Model):
 
     Kept separate from OrderItem so the expiry sweep only ever touches this
     table, never the permanent order-history rows.
+
+    BEGINNER NOTE: think of this as a claim ticket, separate from the
+    receipt (OrderItem). "I am holding 2 units of product X until 3:15pm,
+    unless payment confirms first" is exactly what one Reservation row
+    says. Created in apps/orders/services.py's begin_checkout(), flipped to
+    CONFIRMED in that same file's confirm_reservation() (on real payment),
+    or flipped to EXPIRED in apps/orders/tasks.py's
+    expire_single_reservation() (if nobody paid in time).
     """
 
     class Status(models.TextChoices):
@@ -74,6 +133,14 @@ class StripeEvent(models.Model):
     The unique constraint on stripe_event_id is the actual guarantee against
     double-processing a duplicate delivery — not an application-level exists()
     check, which would have its own race between two concurrent deliveries.
+
+    BEGINNER NOTE: `unique=True` right on the field below is doing the real
+    work here - it's a rule enforced by the DATABASE ITSELF, not by Python
+    code. Two attempts to save a row with the same stripe_event_id will have
+    the SECOND one rejected by Postgres with an error, no matter how close
+    together in time they arrive - that's what makes this safe even against
+    two near-simultaneous duplicate webhook deliveries, which a plain Python
+    "does this already exist?" check could be fooled by.
     """
 
     stripe_event_id = models.CharField(max_length=255, unique=True)
@@ -81,6 +148,12 @@ class StripeEvent(models.Model):
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="stripe_events")
     payload = models.JSONField()
 
+    # processed_at starts out empty (null) the moment a webhook is first
+    # claimed, and only gets filled in once apps/orders/services.py's
+    # handle_stripe_event() finishes applying its effect. A row sitting
+    # here with processed_at still null for more than 2 minutes is exactly
+    # what apps/orders/tasks.py's sweep_unprocessed_stripe_events() looks
+    # for - proof something crashed partway through.
     processed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
