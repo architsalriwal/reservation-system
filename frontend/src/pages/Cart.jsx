@@ -1,3 +1,9 @@
+// BEGINNER MAP: this is the page where the actual checkout request gets
+// fired - see handleCheckout() below. Everything that happens AFTER that
+// click (the real stock lock, the Stripe redirect) is covered in
+// backend/apps/orders/views.py's CheckoutView and
+// backend/apps/orders/services.py's begin_checkout().
+
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -18,6 +24,14 @@ export default function Cart() {
   // dedupe them into a single order - see CheckoutView's docstring. A
   // fresh mount (new page visit) gets a fresh key, which is correct: that's
   // a new, deliberate checkout attempt, not a retry of the old one.
+  //
+  // BEGINNER NOTE on useRef: unlike useState, changing a ref's .current
+  // value does NOT cause this component to re-render. That's exactly what
+  // we want here - this value needs to survive across re-renders (e.g. the
+  // "Starting checkout..." button label changing) but should never itself
+  // trigger one. The `if (!idempotencyKeyRef.current)` check below runs on
+  // every render but only actually generates a new UUID the very first
+  // time, since every render after that finds .current already set.
   const idempotencyKeyRef = useRef(null);
   if (!idempotencyKeyRef.current) {
     idempotencyKeyRef.current = crypto.randomUUID();
@@ -25,23 +39,42 @@ export default function Cart() {
 
   async function handleCheckout() {
     if (!isAuthenticated) {
+      // Checkout requires login (unlike browsing or adding to cart, which
+      // work for anonymous visitors) - send them to log in first instead
+      // of letting the request fail.
       navigate("/login");
       return;
     }
     setCheckingOut(true);
     setError(null);
     try {
+      // THE ACTUAL CHECKOUT REQUEST. The Idempotency-Key header here is
+      // what backend/apps/orders/views.py's CheckoutView checks first,
+      // before touching any stock at all - see that file's comments for
+      // the full claim-before-mutate story.
       const { data } = await api.post(
         "/checkout/",
         {},
         { headers: { "Idempotency-Key": idempotencyKeyRef.current } }
       );
       if (data.checkout_url) {
+        // Stock was reserved AND Stripe gave us a payment page - leave
+        // this site entirely and go there. window.location.href (not
+        // React Router's navigate()) is a FULL browser navigation, the
+        // same as typing the URL in manually - this is not an in-app page.
         window.location.href = data.checkout_url;
       } else {
+        // Stock was reserved, but Stripe itself failed (see the circuit
+        // breaker in backend/apps/orders/views.py) - the order is still
+        // real, so send them to its status page instead of pretending
+        // nothing happened.
         navigate(`/orders/${data.order.id}`);
       }
     } catch (err) {
+      // Most commonly a 409 "Insufficient stock" from begin_checkout() -
+      // `err.response?.data?.detail` reads the backend's error message if
+      // one exists, falling back to a generic message if the request
+      // failed in some other way (e.g. no network connection at all).
       setError(err.response?.data?.detail ?? "Checkout failed.");
     } finally {
       setCheckingOut(false);

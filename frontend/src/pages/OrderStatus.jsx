@@ -36,6 +36,14 @@ export default function OrderStatus() {
       .catch(() => setError("Could not load this order."));
   }, [orderId, authLoading, isAuthenticated]);
 
+  // THE LIVE-UPDATE CONNECTION. Separate from the plain GET above - this
+  // opens a WebSocket (a connection that stays open, unlike a normal
+  // request) to backend/apps/realtime/consumers.py's OrderConsumer. The
+  // `token` is attached as a URL query parameter here because browsers
+  // can't attach custom headers (like the usual "Authorization: Bearer
+  // ...") to a WebSocket connection request the way they can for a normal
+  // HTTP request - the token has to travel some other way, and the URL is
+  // the one available for it.
   useEffect(() => {
     if (authLoading || !isAuthenticated) return;
     const token = getAccessToken();
@@ -45,6 +53,10 @@ export default function OrderStatus() {
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
+    // Fires automatically every time the SERVER sends something down this
+    // connection - no polling, no repeatedly asking "has anything
+    // changed?" See backend/apps/realtime/publish.py for what actually
+    // triggers a message to arrive here.
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === "order.status") {
@@ -52,12 +64,24 @@ export default function OrderStatus() {
       }
     };
 
+    // The function returned from a useEffect is its CLEANUP - React calls
+    // this automatically when the component unmounts (user navigates
+    // away) or before this effect re-runs. Without explicitly closing the
+    // socket here, the connection could be left open even after the user
+    // has left this page.
     return () => socket.close();
   }, [orderId, authLoading, isAuthenticated]);
 
   if (error) return <p className="error">{error}</p>;
   if (!order) return <p className="center-loading">Loading order...</p>;
 
+  // `liveStatus ?? order.status`: the `??` operator means "use the left
+  // side, UNLESS it's null/undefined, in which case use the right side
+  // instead." liveStatus starts out as `null` (no WebSocket message has
+  // arrived yet) and only gets set once a real update comes in - until
+  // then, this falls back to whatever status the initial GET request
+  // already returned, so the page always shows something sensible instead
+  // of a blank value while waiting for the first live update.
   const status = liveStatus ?? order.status;
 
   return (
