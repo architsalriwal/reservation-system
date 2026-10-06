@@ -117,10 +117,30 @@ def test_webhook_and_expiry_race_on_the_same_order_without_deadlocking():
     # Whichever side won, the result must be one consistent, valid outcome -
     # never a mix (e.g. order PAID but reservation EXPIRED, or stock released
     # for an order that's actually paid).
-    if order.status == Order.Status.PAID:
-        assert reservation.status == Reservation.Status.CONFIRMED
+    #
+    # Checking reservation.status (not order.status) as the signal for which
+    # side won: dispatch_order_placed() fires two Celery tasks via .delay(),
+    # and with CELERY_TASK_ALWAYS_EAGER=True (the setting CI's test env
+    # uses, unlike local dev) those tasks run SYNCHRONOUSLY, immediately,
+    # right here inside confirm_reservation()'s call to dispatch_order_placed
+    # - including the chained processing -> shipped -> delivered fulfillment
+    # steps, which don't honor their normal 8-second countdown in eager mode
+    # either. So if the webhook path wins, order.status can legitimately end
+    # up anywhere from PAID through DELIVERED by the time this test checks
+    # it, depending on the test environment's Celery setting - a real
+    # behavior difference between local dev and CI, not flakiness. The
+    # reservation itself never advances past CONFIRMED regardless, which is
+    # what makes it the reliable signal here.
+    if reservation.status == Reservation.Status.CONFIRMED:
+        assert order.status in (
+            Order.Status.PAID,
+            Order.Status.PROCESSING,
+            Order.Status.SHIPPED,
+            Order.Status.DELIVERED,
+        )
         assert product.reserved == 2
     else:
-        assert order.status == Order.Status.EXPIRED
         assert reservation.status == Reservation.Status.EXPIRED
+        assert order.status == Order.Status.EXPIRED
+        assert product.reserved == 0
         assert product.reserved == 0
