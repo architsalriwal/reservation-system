@@ -1,3 +1,27 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# This project's login flow issues TWO tokens with very different
+# lifespans and storage rules: a short-lived "access" token returned
+# directly in the response body (the frontend keeps it in memory only),
+# and a longer-lived "refresh" token set as an httponly cookie - meaning
+# JavaScript on the page can never read it, even our own legitimate code,
+# which protects it even if the page had an XSS vulnerability.
+#
+# verify_id_token (the function that would normally call Firebase's real
+# servers to check a login token) is mocked in both tests, so these run
+# instantly and don't depend on Firebase being reachable - what's actually
+# under test is OUR code's handling of tokens/cookies once Firebase's
+# check has already succeeded, not Firebase itself.
+#
+# Test 1: a fresh login gets an access token in the body, a refresh token
+# ONLY as an httponly cookie (never in the JSON body where JS could read
+# it), and creates a local User row tied to the Firebase identity.
+# Test 2: the full lifecycle - refreshing rotates to a brand new refresh
+# token (the old one stops being valid), and logging out blacklists it for
+# real, so a stale refresh token can't be reused afterward.
+# ============================================================================
+
 from unittest.mock import patch
 
 import pytest

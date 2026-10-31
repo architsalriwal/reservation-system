@@ -1,3 +1,20 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# The shopping cart in this project deliberately does NOT require being
+# logged in - it's a session dict, not a database table - so anonymous
+# visitors can browse and add things to their cart, and login is only
+# required once they actually try to check out. That's why there's no
+# force_authenticate() call here, unlike most of the orders/accounts
+# tests: this APIClient is making genuinely anonymous requests, on
+# purpose, and Django's session cookie machinery is what keeps "the same
+# cart" across the three requests below.
+#
+# One straightforward test, walking through the cart's full lifecycle:
+# add an item, update its quantity, then remove it - checking the running
+# total recalculates correctly at each step.
+# ============================================================================
+
 import pytest
 from rest_framework.test import APIClient
 

@@ -1,3 +1,20 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# "Function calling" is how an AI model like Gemini can DO things, not just
+# talk: instead of (or alongside) replying with text, the model can respond
+# saying "call this specific function, with these arguments" - our code
+# then actually runs that real function (one of the tools from
+# test_tools.py), and sends the result BACK to the model so it can give a
+# final, informed answer. That back-and-forth is "the loop" these tests
+# exercise.
+#
+# SimpleNamespace is used throughout to build small fake objects that just
+# need to HAVE certain attributes (like .candidates, .text) without being
+# real Gemini SDK response objects - a lightweight way to fake "shaped
+# like the real thing" without needing the real thing.
+# ============================================================================
+
 """Proof for the function-calling half: Gemini itself is mocked (no real API
 call in the suite), but the loop logic - detect a function call, run the
 real tool, feed the result back, get a final answer - is exercised for
@@ -18,6 +35,10 @@ from apps.orders.tests.factories import ProductFactory
 
 
 def _function_call_response(name, args):
+    # Fakes what Gemini's SDK returns when the model decides to call a
+    # tool/function instead of answering directly - nested the same way
+    # the real response object is nested (.candidates[0].content.parts[0]...)
+    # so the real parsing code under test can't tell the difference.
     call = SimpleNamespace(name=name, args=args)
     part = SimpleNamespace(function_call=call)
     content = SimpleNamespace(parts=[part])
@@ -25,6 +46,8 @@ def _function_call_response(name, args):
 
 
 def _text_response(text):
+    # Fakes a plain text reply from Gemini - no function call, just an
+    # answer, used for the "doesn't need a tool" test below.
     content = SimpleNamespace(parts=[])
     return SimpleNamespace(candidates=[SimpleNamespace(content=content)], text=text)
 

@@ -1,3 +1,19 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# The other webhook test files (test_webhook_idempotency.py) test the
+# INNER function (handle_stripe_event) directly, with hand-built plain
+# Python dicts standing in for a Stripe event - simple and fast, but it
+# means those tests never actually exercise the real HTTP endpoint or the
+# REAL shape of data Stripe sends. This file closes that gap: it sends a
+# fake HTTP request to the actual webhook URL, using an object built to
+# look exactly like what Stripe's real SDK returns (a typed object with
+# attributes, not a plain dict) - which is what caught a real production
+# bug where code written against plain-dict test fixtures broke on every
+# real webhook delivery. See _build_typed_event()'s own docstring below for
+# the technical reason why.
+# ============================================================================
+
 """Exercises the actual StripeWebhookView.post() parsing path, not just the
 service-layer handle_stripe_event() the other webhook tests cover. This is
 the test that would have caught a real bug found via a live end-to-end

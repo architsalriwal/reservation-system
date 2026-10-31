@@ -1,3 +1,20 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# "Tools" here are the specific functions the Gemini AI assistant is
+# allowed to call on a user's behalf (search products, check an order's
+# status, add something to the cart) - TOOL_IMPLEMENTATIONS is a lookup
+# dict mapping a tool's name to its real Python function, and these tests
+# call those functions directly, the same way the assistant's own
+# function-calling loop would, without needing a real AI model in the loop
+# at all.
+#
+# The one test worth reading carefully is
+# test_get_order_status_tool_is_scoped_to_the_requesting_user - it's the
+# proof that the AI assistant can't be tricked into leaking a DIFFERENT
+# user's order details just because it was asked to.
+# ============================================================================
+
 from unittest.mock import patch
 
 import pytest
@@ -9,6 +26,10 @@ from apps.storefront import cart as cart_ops
 
 
 class FakeSession(dict):
+    # A minimal stand-in for Django's real session object - the real one
+    # has extra plumbing for things like talking to the database, but the
+    # cart code under test here only ever treats the session like a plain
+    # dictionary, so a plain dict subclass is all these tests need.
     pass
 
 

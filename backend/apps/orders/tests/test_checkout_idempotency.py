@@ -1,3 +1,20 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# "Idempotency key" is just a fancy name for a simple idea: the client
+# (the browser/frontend) generates one random ID per checkout ATTEMPT, and
+# sends it along with the request. If that exact same request gets sent
+# again - because the network dropped the first response, or a double-click
+# slipped through - the server recognizes the repeated key and returns the
+# SAME result instead of creating a second, duplicate order.
+#
+# Five tests here, roughly in order of how a real checkout attempt could go
+# wrong: missing the key entirely, a clean retry after success, two
+# genuinely different attempts (different keys), a retry after a FAILED
+# attempt, and finally the real concurrency proof - many requests with the
+# identical key arriving at the exact same moment.
+# ============================================================================
+
 """Proof for the checkout-idempotency-key pattern from CLAUDE.md's "Patterns
 worth building" list: a retried checkout request (flaky network, a
 double-click that slips past the disabled button) must never create a
@@ -19,10 +36,19 @@ from rest_framework.test import APIClient
 from apps.orders.models import CheckoutIdempotencyKey, Order
 from apps.orders.tests.factories import ProductFactory, UserFactory
 
+# A fake stand-in for what Stripe's real API would return when asked to
+# create a checkout session - just enough shape (a .url attribute) for the
+# code under test to work with, without ever making a real network call to
+# Stripe during tests.
 FAKE_SESSION = SimpleNamespace(url="https://checkout.stripe.com/fake-session")
 
 
 def _authed_client_with_cart_item(product, quantity=1):
+    # A small helper shared by every test below: creates a fake logged-in
+    # user and an APIClient (DRF's test tool for sending fake HTTP requests
+    # without a real running server) already "logged in" as that user via
+    # force_authenticate - a testing shortcut that skips the real login flow
+    # entirely - with one item already added to their cart.
     user = UserFactory()
     client = APIClient()
     client.force_authenticate(user=user)
@@ -32,6 +58,9 @@ def _authed_client_with_cart_item(product, quantity=1):
 
 @pytest.mark.django_db
 def test_checkout_requires_idempotency_key_header():
+    # No HTTP_IDEMPOTENCY_KEY header at all here, on purpose - the whole
+    # safety mechanism depends on having a key to compare against, so
+    # checkout must refuse to even try without one.
     product = ProductFactory(price=10, stock=5)
     client, _ = _authed_client_with_cart_item(product)
 

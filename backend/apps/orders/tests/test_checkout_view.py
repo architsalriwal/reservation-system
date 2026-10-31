@@ -1,3 +1,23 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# These tests answer one question: "what happens to a checkout attempt if
+# Stripe itself is down or failing?" The three tests build on each other:
+#
+#   1. One failed call - does the order/reservation survive correctly,
+#      instead of crashing or silently losing the customer's held stock?
+#   2. Does the cart still get cleared even though payment never completed?
+#   3. After REPEATED failures, does the system stop even bothering to call
+#      Stripe (the circuit breaker), instead of hammering a dependency
+#      that's already known to be down?
+#
+# `patch("stripe.checkout.Session.create", side_effect=...)` is how every
+# test here fakes "Stripe is unreachable" without needing a real, flaky
+# network call to Stripe's actual servers during a test run - it swaps out
+# that one function so calling it raises the given error instead of doing
+# anything real.
+# ============================================================================
+
 """Proof for hard feature #5's "Stripe timeout mid-transaction" scenario:
 begin_checkout's reservation must survive a Stripe outage untouched, and the
 endpoint must degrade (502, order still exists, stock still reserved under

@@ -1,3 +1,20 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# Stripe can and does send the same webhook event more than once (its own
+# retry behavior if it doesn't get a fast-enough response) - so "receiving
+# the same payment-confirmed event twice" is a normal, expected scenario,
+# not an edge case. Three tests here:
+#   1. The database itself refuses to store the same Stripe event ID twice
+#      (a unique constraint) - the actual mechanism that prevents double
+#      processing, not just application code remembering to check.
+#   2. Processing that same event twice through the real handling function
+#      still only confirms the order ONCE - no duplicate payment effects.
+#   3. Recovery from a worker crash: an event got "claimed" (saved to the
+#      database) but the process died before actually finishing the work -
+#      a background sweep finds and finishes it later.
+# ============================================================================
+
 """Proof for hard feature #3 (Idempotent webhook handling) and #5 (graceful
 failure recovery via the unprocessed-event sweep).
 """
@@ -15,6 +32,12 @@ from apps.orders.tests.factories import ProductFactory, UserFactory
 
 
 def _claim_event(event_id, order_id, event_type="checkout.session.completed"):
+    # "Claiming" an event means saving a StripeEvent row the moment a
+    # webhook arrives, BEFORE actually acting on it - like tearing off a
+    # restaurant order ticket before cooking the food. stripe_event_id has
+    # a unique constraint on it, which is what makes a duplicate claim fail
+    # outright (see the first test below) rather than relying on an
+    # if-not-exists check that could itself race.
     return StripeEvent.objects.create(
         stripe_event_id=event_id,
         event_type=event_type,

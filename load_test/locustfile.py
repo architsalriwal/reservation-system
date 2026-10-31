@@ -1,3 +1,29 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# This is the REAL end-to-end load test - not a unit test running inside
+# pytest, but Locust (a separate load-testing tool) actually making real
+# HTTP requests over the network against a genuinely running Django server,
+# the same way hundreds of real browsers would. It's the proof behind the
+# "150-user Locust run, exactly 1 order" claim.
+#
+# How Locust works, briefly: you define a "User" class describing what one
+# simulated person does. Locust then spins up many copies of that class at
+# once, each running independently and repeatedly, and reports aggregate
+# stats (request counts, failures, response times) across all of them.
+#   - HttpUser: the base class for "a simulated user that makes HTTP
+#     requests" - self.client below is a real HTTP client pointed at
+#     --host.
+#   - wait_time = between(0, 0.1): how long each simulated user pauses
+#     between actions - kept tiny here on purpose, since the whole point is
+#     maximizing how many requests arrive at the same instant, not
+#     simulating realistic human browsing pauses.
+#   - on_start(): runs once per simulated user, before their first @task -
+#     this is where each one grabs its own unique pre-issued login token.
+#   - @task: marks a method as something a simulated user actually does
+#     repeatedly once running.
+# ============================================================================
+
 """Load test for hard feature #1: concurrent overselling prevention.
 
 Setup:
@@ -22,11 +48,18 @@ from locust import HttpUser, between, task
 
 TOKENS_PATH = os.path.join(os.path.dirname(__file__), "tokens.json")
 
+# tokens.json is generated ahead of time by the seed_load_test management
+# command referenced above - it pre-creates N real user accounts and their
+# real login tokens, so the load test itself doesn't waste time logging
+# in; it can jump straight to the actual checkout race being measured.
 with open(TOKENS_PATH) as f:
     _seed = json.load(f)
 
 PRODUCT_ID = _seed["product_id"]
 TOKENS = _seed["tokens"]
+# An iterator, not a list index - each simulated user calls next() on this
+# ONCE in on_start() to claim one token for itself, guaranteeing no two
+# simulated users ever accidentally share the same login identity.
 _token_iter = iter(TOKENS)
 
 
@@ -34,6 +67,10 @@ class Buyer(HttpUser):
     wait_time = between(0, 0.1)
 
     def on_start(self):
+        # If there are more simulated users than pre-generated tokens,
+        # StopIteration fires - rather than letting that crash with a
+        # confusing traceback, this stops that one extra simulated user
+        # cleanly instead of giving it no valid login at all.
         try:
             self.token = next(_token_iter)
         except StopIteration:

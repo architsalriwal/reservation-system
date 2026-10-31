@@ -1,3 +1,24 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# WebSocket tests look different from normal Django tests because a
+# WebSocket is a long-lived, two-way connection, not a one-off
+# request/response - so these use `async def` test functions and
+# Channels' own WebsocketCommunicator (a fake WebSocket client built for
+# tests) instead of DRF's APIClient. @database_sync_to_async wraps
+# ordinary, synchronous Django ORM calls (like order.save()) so they can
+# safely be awaited from inside an async test - Django's ORM itself isn't
+# async-native, so this bridges the two worlds.
+#
+# Two tests: (1) the actual real-time proof - connect over a WebSocket,
+# trigger a REAL order status change elsewhere, and confirm the connected
+# client receives a live push message, while confirming a save that
+# DOESN'T actually change the status produces no push at all; (2) a
+# connection with no valid auth token gets rejected outright, proving you
+# can't eavesdrop on someone else's order updates by connecting without
+# logging in.
+# ============================================================================
+
 """Proof for hard feature #4 (Real-time order status) and the
 "only genuine transitions" guard from CLAUDE.md's known architecture gaps.
 """

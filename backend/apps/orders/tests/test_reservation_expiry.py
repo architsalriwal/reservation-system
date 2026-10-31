@@ -1,3 +1,19 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# Three tests, building up to the big one:
+#   1. A plain, simple case - a reservation whose time ran out gets expired
+#      and its stock given back.
+#   2. Make sure expiry doesn't undo a payment that already succeeded -
+#      once a webhook confirms payment, a late-running expiry sweep must
+#      recognize that and do nothing.
+#   3. The real deadlock-regression test (this is THE "I found and fixed a
+#      real deadlock" story) - fires the webhook-confirmation path and the
+#      expiry-sweep path at each other, on the SAME order, at the SAME
+#      instant, and proves neither one deadlocks against the other and
+#      both produce one single, consistent outcome.
+# ============================================================================
+
 """Proof for hard feature #2 (Reservation expiry TTL) and its race against a
 concurrent webhook confirming payment (hard feature #5, graceful failure).
 """
@@ -80,6 +96,12 @@ def test_webhook_and_expiry_race_on_the_same_order_without_deadlocking():
     reservation.expires_at = timezone.now() - timedelta(minutes=1)
     reservation.save(update_fields=["expires_at"])
 
+    # threading.Barrier(2) is a synchronization point for exactly 2 threads:
+    # each thread calls barrier.wait() and then BLOCKS there until the
+    # other thread also calls barrier.wait() - only then do both threads
+    # get released, at (as close as possible to) the exact same moment.
+    # This is what makes the race genuinely simultaneous instead of one
+    # thread just happening to start a little before the other.
     barrier = threading.Barrier(2)
     errors = []
 

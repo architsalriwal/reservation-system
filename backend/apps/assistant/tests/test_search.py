@@ -1,3 +1,22 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# "Semantic search" means searching by MEANING instead of exact keyword
+# match - an "embedding" is a list of numbers (768 of them here) that
+# represents what a piece of text is actually about, produced by an AI
+# model. Two pieces of text about similar things end up with similar
+# number-lists; two unrelated pieces of text end up with very different
+# ones. "Cosine distance" is just the math formula for measuring how
+# similar two of these number-lists are - pgvector (a Postgres extension)
+# can sort rows by that distance directly in a database query.
+#
+# These tests don't call the real Gemini AI model to generate embeddings
+# (that would be slow, cost money, and make tests non-deterministic) -
+# they fake embed_query_text() to return a hand-picked vector instead, so
+# what's actually being tested is the database/ranking logic, not whether
+# Gemini is good at understanding language.
+# ============================================================================
+
 """Proof for the RAG half: a product's embedding is precomputed, a query is
 embedded the same way at request time, and pgvector's cosine distance ranks
 the closer match first. The embedding call itself is mocked (no real Gemini
@@ -17,6 +36,12 @@ from apps.orders.tests.factories import ProductFactory
 def _vector(*nonzero_dims):
     """A 768-dim vector that's 1.0 in the given dimensions, 0 elsewhere -
     easy to reason about under cosine distance."""
+    # e.g. _vector(0, 1) makes a vector pointing in the "0 and 1" direction,
+    # and _vector(500, 501) points in a totally different direction - cosine
+    # distance between those two is large (far apart in meaning), while two
+    # vectors built from the SAME dimensions are identical (distance zero) -
+    # which is exactly what lets these tests predict, with certainty, which
+    # product should rank first without needing real AI-generated embeddings.
     v = [0.0] * 768
     for d in nonzero_dims:
         v[d] = 1.0
