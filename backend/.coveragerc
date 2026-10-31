@@ -1,0 +1,13 @@
+[run]
+source = apps
+omit =
+    */migrations/*
+    */tests.py
+    */tests/*
+    */management/commands/*
+    apps/*/apps.py
+    manage.py
+
+[report]
+exclude_lines =
+    pragma: no cover
