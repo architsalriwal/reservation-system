@@ -1,0 +1,73 @@
+# AWS-services variant of docker-compose.prod.yml - built specifically to
+# demonstrate RDS, ElastiCache, and S3 hands-on, alongside the existing
+# single-EC2 setup, not as a permanent replacement for it. See
+# infra/aws-services-demo.yaml for what provisions the RDS/ElastiCache/S3
+# resources this file points at, and infra/README.md for the teardown
+# command that reverts back to the original docker-compose.prod.yml.
+#
+# Differences from docker-compose.prod.yml:
+#   - No `postgres` or `redis` containers - POSTGRES_HOST/REDIS_URL in
+#     backend/.env now point at the real RDS/ElastiCache endpoints instead.
+#   - No `postgres_data` volume - RDS owns that storage now.
+#   - web/celery_worker/celery_beat no longer `depends_on` local DB/cache
+#     containers (there aren't any) - they just connect out to the managed
+#     endpoints directly, same as any client would.
+#   - nginx's `/` route proxies to the S3 bucket's website endpoint as its
+#     origin, instead of serving ./frontend/dist locally - see nginx.conf's
+#     architsalriwal.dev... no, reservly's server block, updated separately.
+
+services:
+  web:
+    restart: unless-stopped
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      # POSTGRES_HOST / REDIS_URL are NOT overridden here - backend/.env
+      # already has the real RDS/ElastiCache endpoints written into it
+      # directly (see the server-side secret-fetch step), so this file
+      # doesn't need to know those values at all.
+      FIREBASE_CREDENTIALS_PATH: /secrets/firebase-adminsdk.json
+    volumes:
+      - static_files:/code/staticfiles
+      - firebase_credentials:/secrets:ro
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+
+  celery_worker:
+    restart: unless-stopped
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      FIREBASE_CREDENTIALS_PATH: /secrets/firebase-adminsdk.json
+    volumes:
+      - firebase_credentials:/secrets:ro
+    command: celery -A config worker --loglevel=info --concurrency=1 --max-memory-per-child=200000
+
+  celery_beat:
+    restart: unless-stopped
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      FIREBASE_CREDENTIALS_PATH: /secrets/firebase-adminsdk.json
+    command: celery -A config beat --loglevel=info
+
+  nginx:
+    restart: unless-stopped
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.aws-services.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_files:/code/staticfiles:ro
+      - ./portfolio-site:/usr/share/nginx/portfolio:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./certbot-webroot:/var/www/certbot
+    depends_on:
+      - web
+
+volumes:
+  static_files:
+  firebase_credentials:

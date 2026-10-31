@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Learning/demo stack for Reservly: RDS (PostgreSQL + pgvector), ElastiCache
+  (Redis), and an S3 bucket for the built frontend. Deliberately built
+  alongside the existing single-EC2 Docker Compose deployment, not as a
+  replacement for it - this stack exists to demonstrate hands-on experience
+  with these managed services, and is meant to be torn down after that's
+  done (see infra/README.md for the teardown command).
+  Does NOT create the EC2 instance, VPC, or the app's own security group -
+  those already exist and are passed in as parameters.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC the app's EC2 instance lives in.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two subnets in that VPC, across different AZs (RDS/ElastiCache subnet groups require this even for a single-AZ deployment).
+  AppSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The existing EC2 instance's security group - RDS/ElastiCache will only accept connections from this group, nothing else.
+  DBName:
+    Type: String
+    Default: reservation_system
+  DBUsername:
+    Type: String
+    Default: postgres
+
+Resources:
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Postgres 5432 only from the app EC2 security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppSecurityGroupId
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Redis 6379 only from the app EC2 security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref AppSecurityGroupId
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for the Reservly RDS instance
+      SubnetIds: !Ref SubnetIds
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnets for the Reservly ElastiCache cluster
+      SubnetIds: !Ref SubnetIds
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: postgres
+      EngineVersion: "16.15"
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: "20"
+      StorageType: gp3
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      # AWS generates and stores the master password in Secrets Manager -
+      # nobody (including whoever runs this template) ever types or sees
+      # the raw password. The app fetches it from Secrets Manager at
+      # runtime instead of reading it from an env file.
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      Engine: redis
+      CacheNodeType: cache.t3.micro
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref CacheSecurityGroup
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadOnly
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+
+Outputs:
+  RDSEndpointAddress:
+    Value: !GetAtt RDSInstance.Endpoint.Address
+  RDSEndpointPort:
+    Value: !GetAtt RDSInstance.Endpoint.Port
+  RDSSecretArn:
+    Description: Secrets Manager secret holding the auto-generated master password
+    Value: !GetAtt RDSInstance.MasterUserSecret.SecretArn
+  CacheEndpointAddress:
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Address
+  CacheEndpointPort:
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Port
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendWebsiteURL:
+    Value: !GetAtt FrontendBucket.WebsiteURL
