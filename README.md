@@ -163,20 +163,59 @@ still produces exactly one order.
 
 CLAUDE.md's original description of this pattern includes inventory
 deduction as one of the decoupled consumers. Deliberately *not* implemented
-that way: inventory deduction already happens synchronously inside
-`confirm_reservation()`'s locked transaction, and moving it to an async
-consumer would mean a request could return "paid" before stock is actually
-decremented — reopening the exact overselling race property 1 exists to
-close. Only the two side effects that aren't correctness-critical to the
-stock guarantee are event consumers: a confirmation email and a fulfillment
-simulation. `dispatch_order_placed()` fires once, after commit, and makes
-two independent `.delay()` calls — not one task invoking the other, which
-is what actually guarantees a broken email provider can never block or fail
+that way — though the actual reason is more specific than "stock changes
+must be synchronous." Stock itself is reserved earlier and separately,
+synchronously, inside `begin_checkout()`'s locked transaction (property 1),
+well before any payment exists — that part was never a live candidate for
+this event at all. What's actually kept synchronous is `confirm_reservation()`
+itself, called directly inside the webhook handler rather than dispatched
+as a task: a background sweep (property 2) releases stock from reservations
+that look abandoned past their TTL every 60 seconds, and if confirming
+payment were deferred to an async consumer, there'd be a real window where
+Stripe has already charged the customer but the order still looks pending
+— long enough for that sweep to release the stock back out from under a
+paid customer. Keeping confirmation synchronous, inline in the webhook
+handler, closes that window (see property 2's
+`payment_after_expiry_conflict` handling for the rare case the sweep wins
+anyway). Only the two side effects that aren't correctness-critical — a
+confirmation email and a fulfillment simulation — are event consumers.
+`dispatch_order_placed()` fires once, after commit, and makes two
+independent `.delay()` calls — not one task invoking the other, which is
+what actually guarantees a broken email provider can never block or fail
 fulfillment. Verified live with a real Celery worker: a real "paid" event
 produced a rendered confirmation email and a
 `paid → processing → shipped → delivered` status trail with the later
-steps genuinely 8 seconds apart. See
-[`test_event_driven_processing.py`](backend/apps/orders/tests/test_event_driven_processing.py).
+steps genuinely 8 seconds apart.
+
+Those two tasks also run under `CELERY_TASK_ACKS_LATE` — a task is only
+removed from the queue after it finishes, not the moment a worker picks it
+up, so a worker crash mid-task (OOM-killed, box rebooted) gets the task
+redelivered to another worker instead of silently dropping it. The
+trade-off is at-least-once delivery: a task might run twice. Every task in
+`apps/orders/tasks.py` is written to be safe under that — including
+`send_order_confirmation_email`, guarded by a
+`confirmation_email_sent_at` field so a redelivered send can't email a
+customer twice. See
+[`test_event_driven_processing.py`](backend/apps/orders/tests/test_event_driven_processing.py),
+including `test_redelivered_email_task_does_not_send_a_second_email`,
+which calls the task twice and asserts only one email goes out.
+
+## Query performance: a real, measured N+1 fix
+
+`ProductViewSet` (`apps/catalog/views.py`) uses
+`select_related("category")` so listing products doesn't trigger one
+extra query per product to fetch its category. This is backed by a real
+benchmark, not an assumed number:
+
+```bash
+python manage.py benchmark_product_queries --count 200
+```
+
+Seeds 200 synthetic products, serializes them once without
+`select_related` and once with it, and reports real query counts and
+wall-clock time for both. Actual measured result: **201 queries down to
+1 (99.5% fewer), 736ms down to 24ms (96.8% faster)** — a textbook N+1,
+not a marginal tuning win, which is why the numbers are this large.
 
 ## Known limitation: Redis/Postgres drift
 
@@ -342,9 +381,21 @@ layer in between to introduce capacity artifacts.
 ## Deployment
 
 `docker-compose.prod.yml` runs `web` (daphne, serves both HTTP and
-WebSocket), `celery_worker`, `celery_beat`, `postgres`, `redis`, `frontend`
-(nginx serving the built SPA), and a top-level `nginx` reverse proxy that
-routes `/api/`, `/admin/`, `/static/`, and `/ws/` to `web` and everything
-else to `frontend`. Secrets come from `backend/.env` (never committed) and
-the Firebase service-account JSON is mounted from a volume populated out of
-band — never baked into an image layer or committed to this repo.
+WebSocket), `celery_worker`, `celery_beat`, `postgres`, `redis`, and one
+`nginx` service that does double duty: reverse-proxying `/api/`, `/admin/`,
+`/static/`, and `/ws/` to `web`, and serving the pre-built frontend
+(`frontend/dist`, built locally and copied onto the host — not built on
+the server itself, to avoid a Node build process competing for memory with
+Postgres/Redis/Django/Celery on a `t3.micro`) directly from a mounted
+volume for everything else. Secrets come from `backend/.env` (never
+committed) and the Firebase service-account JSON is deployed into a Docker
+volume out of band — never baked into an image layer or committed to this
+repo. HTTPS is a free Let's Encrypt certificate via certbot, with a cron
+job handling renewal.
+
+A separate `infra/` folder holds CloudFormation templates for an
+alternative deployment onto a custom VPC with RDS and ElastiCache in
+place of the `postgres`/`redis` containers, built and verified as a
+hands-on exercise with those managed services (see
+`infra/RESPIN_RUNBOOK.md`) — not the default deployment for this
+project's actual scale, and not currently running.
