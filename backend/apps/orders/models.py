@@ -64,6 +64,18 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Set by send_order_confirmation_email (apps/orders/tasks.py) the one
+    # time it actually sends the email, and checked before sending again.
+    # This exists specifically because of CELERY_TASK_ACKS_LATE (see
+    # config/settings.py): under acks_late, Celery can redeliver a task
+    # that already completed its real work, if the worker crashes in the
+    # narrow window after finishing but before acknowledging. Every other
+    # task in this app is safe to just re-run (they check the Order's
+    # current status before acting), but "send an email" has no such
+    # natural check - without this field, a redelivered task would email
+    # the customer their confirmation twice.
+    confirmation_email_sent_at = models.DateTimeField(null=True, blank=True)
+
     def __str__(self):
         return f"Order {self.id} ({self.status})"
 

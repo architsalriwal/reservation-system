@@ -1,3 +1,23 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# "Event-driven" here means: the moment a payment is confirmed, ONE event
+# fires, and two completely separate, independent background jobs
+# (.delay() calls) pick it up - sending the confirmation email, and
+# starting fulfillment (processing -> shipped -> delivered). Neither one
+# calls the other directly, which is what guarantees a slow/broken email
+# provider can never block or break fulfillment, and vice versa.
+#
+# Roughly in order, these tests prove: (1) the two consumers really are
+# independent dispatches, not one calling the other, (2) the email
+# actually sends with real content, (3) a REDELIVERED email task (the
+# acks_late crash-safety scenario) doesn't send a duplicate, (4) a failed
+# send correctly retries instead of silently vanishing, (5)-(7)
+# fulfillment correctly walks processing -> shipped -> delivered and stops
+# there, and never forces a canceled order forward even if its task gets
+# redelivered late.
+# ============================================================================
+
 """Proof for CLAUDE.md's event-driven order processing pattern: paying for
 an order fires one event, and two independent consumers - email and
 fulfillment - handle it without either depending on or blocking the other.
@@ -54,6 +74,30 @@ def test_send_order_confirmation_email_actually_sends():
 
 
 @pytest.mark.django_db
+def test_redelivered_email_task_does_not_send_a_second_email():
+    """Proof for CELERY_TASK_ACKS_LATE (config/settings.py): under
+    acks_late, Celery can run this exact task twice for the same order -
+    e.g. the worker completes the send, then crashes before acking, and a
+    second worker picks the same task back up. Calling .apply() twice here
+    is standing in for that redelivery. Without the
+    confirmation_email_sent_at guard in tasks.py, this would mail the
+    customer their confirmation twice.
+    """
+    product = ProductFactory(stock=5, reserved=0)
+    user = UserFactory(email="buyer@example.com")
+    order = begin_checkout(user, [(product.id, 1)])
+    confirm_reservation(order, source="webhook")
+
+    mail.outbox.clear()
+    send_order_confirmation_email.apply(args=[order.id])
+    send_order_confirmation_email.apply(args=[order.id])  # simulated redelivery
+
+    assert len(mail.outbox) == 1
+    order.refresh_from_db()
+    assert order.confirmation_email_sent_at is not None
+
+
+@pytest.mark.django_db
 def test_email_task_retries_on_send_failure_instead_of_crashing_silently():
     product = ProductFactory(stock=5, reserved=0)
     user = UserFactory(email="buyer@example.com")
@@ -64,6 +108,12 @@ def test_email_task_retries_on_send_failure_instead_of_crashing_silently():
         result = send_order_confirmation_email.apply(args=[order.id], throw=False)
 
     assert result.failed() or isinstance(result.result, Exception)
+    # A failed send must NOT be mistaken for a successful one - the
+    # confirmation_email_sent_at guard only exists to stop a genuine
+    # *redelivery* of an already-sent email, not to block a real retry
+    # after send_mail() itself raised.
+    order.refresh_from_db()
+    assert order.confirmation_email_sent_at is None
 
 
 @pytest.mark.django_db

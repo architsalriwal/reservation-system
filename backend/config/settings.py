@@ -118,6 +118,23 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=False, cast=bool)
+# acks_late=True means a task is only removed from the Redis queue AFTER it
+# finishes successfully, not the moment a worker picks it up. If the worker
+# process dies mid-task (OOM-killed, box rebooted, etc - this project has
+# hit a real OOM kill in production, see the interview briefing), the task
+# is still sitting in the queue and another worker picks it up and runs it
+# again, instead of silently vanishing. The trade-off is "at-least-once"
+# instead of "at-most-once" delivery - a task might run twice. Every task
+# in apps/orders/tasks.py is deliberately written to be safe to run twice
+# (see each task's own docstring for why), which is what makes turning
+# this on safe project-wide instead of needing it configured per-task.
+CELERY_TASK_ACKS_LATE = True
+# The natural companion setting to acks_late: without this, if the worker
+# process itself is killed (not just the task raising an exception) while
+# holding a task, Celery's default behavior can still silently drop it.
+# This makes sure a killed worker's in-flight task goes back on the queue
+# instead, which is the actual behavior acks_late is meant to guarantee.
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
 # --- DRF / SimpleJWT ---
 REST_FRAMEWORK = {

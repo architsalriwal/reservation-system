@@ -50,6 +50,22 @@ def expire_reservations():
     fans out to per-reservation release tasks, so one locked row can't stall
     the whole sweep.
 
+    THe explanation of the line above.
+
+    Let me break this docstring down piece by piece.
+
+"Beat task (every 60s)" — this is expire_reservations(), the function that celery_beat (the scheduler process) triggers automatically every 60 seconds, as covered in the last answer.
+
+"finds ACTIVE reservations past their TTL" — it runs a query: look through all reservations, find the ones still marked ACTIVE (meaning: still holding stock, payment hasn't been confirmed) whose expires_at time has already passed. These are the "abandoned checkout" cases — someone added something to their cart, started checkout, and never actually paid before their time ran out.
+
+"fans out to per-reservation release tasks" — this is the important design choice. Instead of this one function looping through all the expired reservations and releasing each one's stock itself, right there, it does something different: for every single expired reservation it finds, it queues up a brand new, separate, independent task — expire_single_reservation.delay(reservation_id) — one per reservation. So if it finds 50 expired reservations, it doesn't process 50 releases in a loop; it creates 50 separate little jobs and hands them off.
+
+"so one locked row can't stall the whole sweep" — here's why that separation matters. Say reservation #7 out of those 50 happens to be locked at that exact moment — maybe a payment webhook is simultaneously confirming it (select_for_update(), the row-lock mechanism you already know from the checkout flow). If this function tried to release all 50 reservations in one single pass, one after another, hitting that locked row would force the entire function to stop and wait until the lock on #7 clears — and reservations #8 through #50 would be stuck waiting behind it too, even though they have nothing to do with #7 at all.
+
+By instead creating 50 separate, independent tasks, that problem disappears. If task #7 happens to hit a lock and has to wait, it waits on its own — tasks #8 through #50 are completely separate jobs that the worker can pick up and finish regardless, not stuck behind #7 in a single sequential loop.
+
+A simple analogy: imagine a parking garage sending out 50 separate maintenance workers, one per expired meter, instead of sending one single worker to walk down the row and clear all 50 meters one at a time. If worker #7 gets stuck because that car is still there, workers #8 through #50 aren't affected at all — they're already off doing their own meters independently.
+
     BEGINNER NOTE: "@shared_task" is what turns a normal Python function into
     something Celery knows how to run as a background job. Without it,
     calling .delay() on this function below wouldn't work at all - it's the
@@ -151,31 +167,56 @@ def send_order_confirmation_email(self, order_id):
     yours. "bind=True" just means this function gets access to itself (as
     `self`) so it can call `self.retry(...)` below.
     """
-    try:
-        order = Order.objects.select_related("user").get(pk=order_id)
-    except Order.DoesNotExist:
-        return
+    # select_for_update() + checking confirmation_email_sent_at under the
+    # lock is what makes this task safe under CELERY_TASK_ACKS_LATE
+    # (config/settings.py): if this exact task gets redelivered after
+    # already sending the email once (the worker crashed after send_mail()
+    # succeeded but before Celery recorded the ack), this check stops the
+    # second run from emailing the customer again.
+    with transaction.atomic():
+        try:
+            # of=("self",) scopes the row lock to just the Order table.
+            # Without it, Postgres rejects this query outright -
+            # `user` is a nullable FK (SET_NULL on delete), and Postgres
+            # doesn't allow FOR UPDATE on the nullable side of the outer
+            # join that select_related("user") produces.
+            order = (
+                Order.objects.select_for_update(of=("self",))
+                .select_related("user")
+                .get(pk=order_id)
+            )
+        except Order.DoesNotExist:
+            return
 
-    if not order.user or not order.user.email:
-        return
+        if order.confirmation_email_sent_at is not None:
+            return  # already sent - this is a redelivery, not a new order
 
-    try:
-        send_mail(
-            subject=f"Order confirmed - {order.id}",
-            message=(
-                f"Thanks for your order!\n\nTotal: {order.currency} {order.total_amount}\n"
-                f"Order ID: {order.id}\n\nWe'll let you know as it ships."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[order.user.email],
-        )
-    except Exception as exc:
-        # Something went wrong sending the email (provider down, network
-        # blip). self.retry() tells Celery "try this exact same task again
-        # later" (up to max_retries=3 times, ~30s apart) instead of just
-        # giving up - a temporary outage shouldn't mean the customer never
-        # gets their confirmation email.
-        raise self.retry(exc=exc)
+        if not order.user or not order.user.email:
+            return
+
+        try:
+            send_mail(
+                subject=f"Order confirmed - {order.id}",
+                message=(
+                    f"Thanks for your order!\n\nTotal: {order.currency} {order.total_amount}\n"
+                    f"Order ID: {order.id}\n\nWe'll let you know as it ships."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[order.user.email],
+            )
+        except Exception as exc:
+            # Something went wrong sending the email (provider down, network
+            # blip). self.retry() tells Celery "try this exact same task again
+            # later" (up to max_retries=3 times, ~30s apart) instead of just
+            # giving up - a temporary outage shouldn't mean the customer never
+            # gets their confirmation email. Raising out of this `with` block
+            # rolls back the transaction, so confirmation_email_sent_at is
+            # NOT set below if the send itself failed - the retry is free to
+            # actually try sending again.
+            raise self.retry(exc=exc)
+
+        order.confirmation_email_sent_at = timezone.now()
+        order.save(update_fields=["confirmation_email_sent_at"])
 
 
 @shared_task(bind=True, max_retries=3)
