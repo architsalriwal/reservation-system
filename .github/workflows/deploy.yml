@@ -1,21 +1,73 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# Where ci.yml only CHECKS code (does it pass tests, does it build), this
+# workflow actually SHIPS code to the real, live production server.
+#
+# This now runs two ways:
+#   1. Automatically, right after ci.yml finishes on main - but only if
+#      that ci.yml run actually PASSED (see the `if:` on the job below).
+#      A failing commit never reaches this workflow at all in that case.
+#   2. Manually, via "Run workflow" in GitHub's UI (`workflow_dispatch`) -
+#      kept as a deliberate override for re-deploying a commit that hasn't
+#      changed (e.g. the server itself needs a restart) without needing a
+#      throwaway commit just to re-trigger CI.
+#
+# `${{ secrets.EC2_HOST }}` etc. below are GitHub Secrets - encrypted
+# values stored in the repo's settings, never visible in this file or in
+# any log output (GitHub automatically masks them as *** if a step ever
+# tries to print one). That's what lets this file be public on GitHub
+# while the actual server address/username/SSH key stay private.
+# ============================================================================
+
 name: Deploy to AWS EC2
 
-# Manual trigger only, deliberately - the production host is a t3.micro that
-# has locked up under load more than once (burstable-CPU-credit exhaustion,
-# see the README). An unattended `docker compose up -d --build` firing on
-# every push, with no one watching, is exactly the kind of surprise that box
-# can't currently absorb. Click "Run workflow" when you actually mean to
-# deploy, same as every deploy this project has done so far.
+# `workflow_run` fires whenever the named workflow (ci.yml, whose `name:`
+# is "CI") finishes running on main - "finishes" meaning pass OR fail, which
+# is exactly why the job below still needs its own pass/fail check.
+# `workflow_dispatch` is kept alongside it as a manual override - the
+# production host is a t3.micro that has locked up under load more than
+# once (burstable-CPU-credit exhaustion, see the README), so even the
+# automatic path only ever runs once per CI completion, never unattended on
+# a schedule.
 on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # The actual gate: when GitHub triggered this run because ci.yml just
+    # finished, only continue if that run's conclusion was "success" - a
+    # failed or cancelled CI run stops here, before anything touches the
+    # real server. When triggered manually instead (workflow_dispatch has
+    # no `workflow_run` payload at all), this condition is skipped entirely
+    # - that's the deliberate override path from the comment above.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    # An explicitly empty list - this job depends on no other job in this
+    # workflow (there's only one job here anyway). Written out explicitly
+    # rather than omitted, as a clear marker that "runs standalone" was a
+    # deliberate choice, not something left unconsidered.
     needs: []
     steps:
+      # On a workflow_run trigger, checkout defaults to main's latest HEAD,
+      # which is normally fine here - but pinning to the exact commit SHA
+      # that CI just finished testing (when that SHA is available) means
+      # what gets deployed is provably the same code that passed, not
+      # whatever landed on main a moment later.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # This single step does the entire deploy: open an SSH connection to
+      # the real EC2 server using the GitHub Secrets above, then run the
+      # multi-line shell script below AS IF you'd typed it yourself after
+      # SSHing in by hand.
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -23,6 +75,11 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            # Makes the ENTIRE script stop immediately if any single line
+            # fails, instead of bash's normal behavior of plowing ahead to
+            # the next line regardless. Without this, a failed `git pull`
+            # wouldn't stop `docker compose up` from still running against
+            # whatever old code happened to already be on disk.
             set -e
             # Matches the actual layout on the server - the app lives in
             # ~/app, not ~/reservation-system (this drifted from reality
@@ -32,9 +89,17 @@ jobs:
             APP_DIR=/home/${{ secrets.EC2_USER }}/app
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
+            # First deploy ever: the app directory won't have a .git folder
+            # yet, so clone the whole repo fresh. Every deploy after that:
+            # .git already exists, so just pull the latest main instead of
+            # re-cloning from scratch.
             if [ -d .git ]; then
               git pull origin main
             else
               git clone ${{ github.server_url }}/${{ github.repository }}.git .
             fi
+            # Rebuilds any Docker image whose underlying code changed, and
+            # restarts just those containers - containers that didn't
+            # change (e.g. postgres, if only backend code changed) are left
+            # running undisturbed, not needlessly restarted.
             docker compose -f docker-compose.prod.yml up -d --build

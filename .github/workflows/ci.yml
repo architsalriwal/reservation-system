@@ -1,3 +1,30 @@
+# ============================================================================
+# BEGINNER MAP OF THIS FILE
+#
+# This is a GitHub Actions "workflow" - a set of automated steps GitHub
+# itself runs on its own temporary servers (not your machine, not the
+# production server) every time code is pushed. Think of it as GitHub
+# automatically asking "does this code actually still work?" on every
+# change, without a human needing to run the tests by hand.
+#
+# `on:` below says WHEN this runs: every push to main, and every pull
+# request (so a PR shows red/green before it's even merged).
+#
+# `jobs:` defines the separate, independent things to check - here, two:
+# backend-tests (does the Django app's logic still work?) and
+# frontend-build (does the React app still build without errors?). Jobs
+# run in parallel on separate temporary machines by default, which is why
+# backend-tests gets its own `services:` (a temporary Postgres and Redis,
+# just for this run) instead of sharing anything with frontend-build.
+#
+# Nothing here ever touches the real production server - this workflow
+# only checks the code. deploy.yml is a separate file, but it's no longer
+# fully independent of this one: it listens for this workflow (by the
+# `name: CI` below) to finish, and only deploys automatically if it
+# finished with a passing result. A failing run here simply never reaches
+# the server - see deploy.yml for how that gate works on its side.
+# ============================================================================
+
 name: CI
 
 on:
@@ -27,12 +54,20 @@ jobs:
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]
+        # health-cmd/interval/timeout/retries together make GitHub Actions
+        # actually WAIT until Redis is ready to accept connections before
+        # running any step below, instead of immediately racing ahead and
+        # failing because the service container is still starting up.
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
 
+    # These environment variables are only real inside THIS CI run - fake,
+    # throwaway values (a test secret key, a test DB password) that exist
+    # purely so the app has something to read; nothing here is a real
+    # production credential, and nothing here is reused outside this job.
     env:
       DJANGO_SECRET_KEY: ci-test-secret-key
       DJANGO_DEBUG: "True"
@@ -42,8 +77,15 @@ jobs:
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://localhost:6379/0
+      # True here (unlike real production) makes every Celery .delay() call
+      # run immediately, synchronously, in the same process - so a test can
+      # simply call a view and then check the database, instead of needing
+      # an actual separate Celery worker process running alongside the test.
       CELERY_TASK_ALWAYS_EAGER: "True"
 
+    # Every `run:` step below executes as if you'd first `cd backend` -
+    # without this, each step would default to the repo's root folder,
+    # where manage.py doesn't exist.
     defaults:
       run:
         working-directory: backend
@@ -67,6 +109,10 @@ jobs:
       - name: Run tests (concurrency/idempotency/TTL/websocket proof suite)
         run: python -m pytest apps/ -v
 
+  # A completely separate job from backend-tests above - this one just
+  # confirms the React frontend still compiles cleanly. It doesn't run any
+  # frontend tests (there aren't any here) and doesn't need Postgres/Redis
+  # at all, which is why it has no `services:` block.
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
@@ -78,8 +124,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          # Caches node_modules between runs based on package-lock.json's
+          # contents, so `npm ci` below doesn't re-download every package
+          # from scratch on every single push - only when dependencies
+          # actually change.
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
+      # npm ci (not npm install) installs EXACTLY what package-lock.json
+      # specifies, and fails loudly if that file and package.json disagree
+      # - the right choice for CI, where you want a reproducible build, not
+      # npm quietly deciding to update something on its own.
       - run: npm ci
+      # Just confirms the production build itself succeeds (catches things
+      # like a broken import or a syntax error that `npm run dev` might not
+      # have caught) - this workflow doesn't deploy the output anywhere.
       - run: npm run build
